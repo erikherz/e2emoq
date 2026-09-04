@@ -275,6 +275,19 @@ npx tsc --noEmit -p tsconfig.json 2>&1 | grep '^src/worker'
 
 ## Licence
 
-No licence is declared, which under copyright means **all rights reserved** — the source is
-readable but not licensed for reuse. Being able to read the client is the point: an encryption
-claim you cannot inspect is a claim you are taking on faith. If you want to build on it, ask.
+Dual-licensed under either of
+
+- **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE))
+- **MIT license** ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+This matches the licence on the `@moq` packages this is built from, which avoids any
+compatibility question between the application and its dependencies. The dual form is the Rust
+ecosystem's convention and it exists for a reason worth knowing: **MIT contains no patent
+language at all**, while Apache-2.0 carries an express patent grant and a retaliation clause.
+In media coding, where patents are dense, that is not a formality — so contributors and users
+get whichever instrument suits them.
+
+Unless you state otherwise, any contribution you intentionally submit for inclusion shall be
+dual-licensed as above, without additional terms.
