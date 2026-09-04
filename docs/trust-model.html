@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trust &amp; Privacy Model — e2eMoQ / moqplay</title>
+<style>
+  :root{
+    --ink:#16201c; --muted:#5b6b64; --line:#d9e2dd; --line2:#eef3f0;
+    --accent:#0e7a66; --accent-weak:#e5f2ee; --warn:#b45309; --warn-weak:#fdf3e6;
+    --ok:#0e7a66; --bad:#b03a2e; --panel:#f7faf9;
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  body{
+    margin:0; color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#fff;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:56px 40px 72px;}
+  h1{font-size:30px; line-height:1.15; letter-spacing:-.01em; margin:0 0 6px;}
+  .sub{color:var(--muted); font-size:13.5px; margin:0 0 8px; font-style:italic;}
+  h2{font-size:20px; letter-spacing:-.005em; margin:38px 0 12px; padding-bottom:6px;
+     border-bottom:2px solid var(--accent-weak);}
+  h3{font-size:15.5px; margin:24px 0 8px; color:var(--accent);}
+  p{margin:0 0 12px;}
+  ul,ol{margin:0 0 12px; padding-left:22px;}
+  li{margin:4px 0;}
+  strong{font-weight:650;}
+  code{font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+       background:var(--line2); padding:1px 5px; border-radius:4px; word-break:break-word;}
+  a{color:var(--accent);}
+  hr{border:none; border-top:1px solid var(--line); margin:26px 0;}
+  .lead{background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--accent);
+        padding:14px 16px; border-radius:8px; margin:0 0 8px;}
+  blockquote{margin:14px 0; padding:12px 16px; background:var(--accent-weak);
+             border-radius:8px; font-size:14.5px;}
+  blockquote p{margin:0;}
+  table{border-collapse:collapse; width:100%; margin:10px 0 16px; font-size:13.5px;}
+  th,td{border:1px solid var(--line); padding:7px 10px; text-align:left; vertical-align:top;}
+  th{background:var(--accent-weak); font-weight:650;}
+  tbody tr:nth-child(even){background:var(--line2);}
+  .warn{color:var(--warn);} .ok{color:var(--ok); font-weight:650;} .bad{color:var(--bad); font-weight:650;}
+  .tag{display:inline-block; font-size:11px; font-weight:650; padding:1px 7px; border-radius:999px;
+       vertical-align:middle;}
+  .tag.trusted{background:#e5f2ee; color:#0e7a66;}
+  .tag.untrusted{background:#fbe7e3; color:#b03a2e;}
+  .tag.central{background:#e7effb; color:#2c5aa0;}
+  .tag.app{background:#f1eefb; color:#5b47a0;}
+
+  /* trust-tier diagram */
+  .diagram{margin:14px 0 6px;}
+  .tiers{display:flex; gap:10px; flex-wrap:wrap;}
+  .tier{flex:1 1 150px; border:1px solid var(--line); border-radius:10px; padding:12px;
+        background:var(--panel);}
+  .tier h4{margin:0 0 4px; font-size:13.5px;}
+  .tier .who{font-size:12px; color:var(--muted); margin:0 0 8px;}
+  .tier .sees{font-size:11.5px; line-height:1.5; margin:0;}
+  .tier.t-browser{border-top:3px solid #0e7a66;}
+  .tier.t-app{border-top:3px solid #5b47a0;}
+  .tier.t-broker{border-top:3px solid #2c5aa0;}
+  .tier.t-fleet{border-top:3px solid #b03a2e;}
+  .flow{margin:12px 0 0; font-size:12.5px; color:var(--muted);}
+  .flow b{color:var(--ink);}
+
+  @page{size:Letter; margin:14mm 15mm;}
+  @media print{
+    .wrap{padding:0; max-width:none;}
+    h2{page-break-after:avoid;} h3{page-break-after:avoid;}
+    table,blockquote,.lead,.tiers{page-break-inside:avoid;}
+    tr{page-break-inside:avoid;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Trust &amp; Privacy Model</h1>
+<p class="sub">e2eMoQ / moqplay · working reference (actively evolving) · companion to
+security-architecture (content-encryption deep-dive) and federation-roadmap.</p>
+
+<p class="lead">This document describes <strong>who can see what</strong> across the whole
+live-streaming system, so we can reason about — and minimize — what any single party learns
+about an end user, including under legal compulsion or seizure.</p>
+
+<h2>1. The goal, stated as a threat model</h2>
+<p>Two guarantees we want end users (broadcasters <strong>and</strong> viewers) to be able to
+rely on:</p>
+<ul>
+  <li><strong>Content confidentiality</strong> — no party in the middle (fleet operator, CDN,
+    broker) can decode the media. Only the intended endpoints can.</li>
+  <li><strong>Identity protection</strong> — no party can trace a stream back to a person,
+    <em>even if a powerful entity compels or seizes</em> the customer app (e2eMoQ), the
+    broker (moqcdn.net/cdnadmin), or a fleet box.</li>
+</ul>
+<p>Explicitly <strong>out of scope</strong> (accepted limits): copy protection after decode
+(an authorized viewer can always re-capture decoded frames — this is not DRM), and
+network-level anonymity of the viewer's IP from the box that terminates their connection (that
+is the viewer's own tool — Tor/VPN — to deploy).</p>
+<p>Guiding principle for the compulsion threat:</p>
+<blockquote><p><strong>You can only be compelled to reveal what you retain and can
+enumerate.</strong> The levers are <em>data minimization</em> (don't store it) and
+<em>compartmentalization</em> (split knowledge so no single party can link
+identity ↔ broadcast ↔ viewer alone).</p></blockquote>
+
+<h2>2. The parties and the trust boundaries</h2>
+<div class="diagram">
+  <div class="tiers">
+    <div class="tier t-browser">
+      <h4>Browser endpoints <span class="tag trusted">TRUSTED</span></h4>
+      <p class="who">Broadcaster &amp; viewer</p>
+      <p class="sees">Hold the content key; the only place media is plaintext. Encrypt on the
+        way out, decrypt on the way in.</p>
+    </div>
+    <div class="tier t-app">
+      <h4>Customer app <span class="tag app">app</span></h4>
+      <p class="who">e2eMoQ / moqplay (Cloudflare)</p>
+      <p class="sees">Mints tokens, serves the client code, sees each request's IP transiently,
+        holds the content key today. Most powerful party.</p>
+    </div>
+    <div class="tier t-broker">
+      <h4>Broker <span class="tag central">central · ours</span></h4>
+      <p class="who">moqcdn.net/cdnadmin</p>
+      <p class="sees">Provisions capacity. Content-blind. Sees coarse geo + a pseudonymous
+        broadcast-name history. No viewer IP.</p>
+    </div>
+    <div class="tier t-fleet">
+      <h4>Fleet box <span class="tag untrusted">UNTRUSTED</span></h4>
+      <p class="who">was.moqcdn.net etc. — anyone can run one</p>
+      <p class="sees">Terminates the QUIC connection (sees peer IP), forwards ciphertext only.
+        Persists nothing.</p>
+    </div>
+  </div>
+  <p class="flow"><b>Data flow:</b> browser → app (token + route, coarse geo) → broker
+    (<code>/cdn/assign</code>: broadcast name + coarse geo) → fleet box provisioned; then
+    broadcaster → box (<code>ciphertext + ?jwt=</code>) → box fans ciphertext out → viewers.</p>
+</div>
+<p>The <strong>browser endpoints are trusted</strong> (they hold the key and see plaintext).
+The <strong>fleet is untrusted</strong> (anyone can run the installer and delegate a box). The
+<strong>broker</strong> is central and operated by us but content-blind and identity-light by
+design. The <strong>app</strong> is the most powerful party and the hardest to fully blind
+(see §6).</p>
+
+<h2>3. The two axes</h2>
+<table>
+  <thead><tr><th></th><th>Content confidentiality</th><th>Identity / traceability</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Question</strong></td><td>Can party X <em>decode</em> the media?</td>
+      <td>Can party X <em>link the stream to a person</em>?</td></tr>
+    <tr><td><strong>Mechanism</strong></td><td>AES-256-GCM per-frame; key never sent to the relay</td>
+      <td>data minimization + pseudonymous identity</td></tr>
+    <tr><td><strong>Status</strong></td><td><span class="ok">Solved vs fleet + broker.</span>
+      App can decode today (§4).</td>
+      <td>Strong and mostly by omission; per-party surface in §5.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Content confidentiality (summary)</h2>
+<p>Full detail in <em>security-architecture</em>; the essentials:</p>
+<ul>
+  <li>Media is encrypted with a <strong>single per-broadcast AES-256-GCM key</strong>
+    (<code>src/crypto/media-crypto.ts</code>). The publisher encrypts each encoded chunk right
+    after WebCodecs encode; viewers decrypt right before WebCodecs decode. <strong>Both audio
+    and video</strong> are encrypted (separate build-time seams in <code>vite.config.ts</code>;
+    the build fails closed if either seam is missing).</li>
+  <li>The relay forwards only <code>[varint ts][nonce][ciphertext+tag]</code> and
+    <strong>never receives the key</strong> — relay-blind by construction. The catalog/codec
+    config is left in the clear by design (leaks codec/resolution metadata, never content).</li>
+  <li><strong>Today the key is minted by the app's Worker and stored in D1</strong>
+    (<code>generateContentKey()</code>, <code>src/worker/index.ts</code>) — so the <em>app</em>
+    (Cloudflare) can decode, though the fleet and broker cannot. Removing the app from the
+    decrypt set is a known, optional change (browser-minted key + link-fragment delivery) —
+    see §7.4.</li>
+</ul>
+
+<h2>5. What each party actually knows about a user (code-verified)</h2>
+
+<h3>5a. Fleet box (relay) — untrusted</h3>
+<p>Verified: the moq-relay <strong>never reads, logs, or reports the client IP</strong> (no
+<code>peer_addr</code>/<code>remote_addr</code> anywhere in the relay source); the autoscaler
+tracks connections only as a <strong>count</strong>, never per-IP.</p>
+<ul>
+  <li><strong>Sees (transient, packet layer):</strong> the viewer's IP:port — only as live QUIC
+    connection state so the kernel can route packets. Never logged or persisted. The box is a
+    <strong>Hermit unikernel with no persistent disk / no OS access log</strong>, so nothing
+    accumulates.</li>
+  <li><strong>Processes:</strong> the <code>?jwt=</code> → subscribe scope = <strong>broadcast
+    name</strong> (pseudonymous stream id); track names; connection duration; byte counts.
+    Media = ciphertext only.</li>
+  <li><strong>Logs</strong> (<code>node&lt;idx&gt;.log</code>):
+    <code>session accepted … root=&lt;broadcast&gt; subscribe=&lt;broadcast&gt;</code> —
+    broadcast scopes, <strong>no IP</strong>.</li>
+  <li><strong>Reports to broker:</strong> counts + egress + customer + broadcast name. No IPs.</li>
+  <li><strong class="warn">Ceiling (matters, because fleet owners are untrusted):</strong> the
+    machine terminating the QUIC connection <em>inherently sees the peer IP</em>, and the
+    broadcast name is in the token. A malicious operator with root can therefore observe
+    <strong>"IP X is watching pseudonymous broadcast <code>&lt;id&gt;</code>, now"</strong> via
+    <code>tcpdump</code> regardless of the shipped code. You cannot prevent this in software.
+    Mitigations: viewer-side Tor/VPN; keep the broadcast id unlinkable to a person.</li>
+</ul>
+<p><strong>Net:</strong> at most <code>IP ↔ pseudonymous-broadcast-id ↔ timing/bytes</code>.
+No content, no identity, nothing persisted by the shipped stack.</p>
+
+<h3>5b. Broker (moqcdn.net/cdnadmin) — central, ours</h3>
+<p>The broker is a hop <strong>behind</strong> the app (Worker→Worker), so it <strong>never
+sees the viewer's IP</strong>.</p>
+<ul>
+  <li><strong>Receives per <code>/cdn/assign</code>:</strong> the <code>cdn_</code> customer
+    token (identifies the <em>app</em>, not the user); the <strong>broadcast name</strong>
+    (pseudonymous); <code>hints.geo = {lat, lon, country, colo}</code> — the <strong>viewer's
+    coarse location</strong>, forwarded by the app; routing passthrough. Its own
+    <code>request.cf</code> reflects the <em>app's</em> colo, not the viewer.</li>
+  <li><strong>Transient (log-only):</strong> the assign decision <code>console.log</code>s
+    coarse geo (<code>assign.ts</code>); <strong>not written to D1/KV</strong>.
+    <span class="warn">⚠ Unless Cloudflare Logpush is enabled</span> — then it is retained.</li>
+  <li><strong>Persisted (D1, from the poll cycle):</strong> aggregate <code>box_samples</code> /
+    <code>node_samples</code> / <code>metering_samples</code> — <code>node_samples</code>
+    includes <strong>customer + broadcast name + connection count + time + box</strong>. This
+    is a <strong>pseudonymous, enumerable broadcast history</strong> (streams, counts, timing)
+    — <strong>never per-viewer, never an IP</strong>.</li>
+</ul>
+<p><strong>Net:</strong> coarse geo (mostly transient) + a pseudonymous broadcast-name history.
+No IP, no account, no identity.</p>
+
+<h3>5c. Customer app (e2eMoQ) — most powerful party</h3>
+<ul>
+  <li><strong>Sees (transient):</strong> each viewer's request to
+    <code>/api/streams/:id/route</code> carries their IP via Cloudflare <code>request.cf</code>.
+    <strong>No per-viewer record is persisted</strong> — the route handler mints a token in
+    memory and returns it; there is no viewer <code>INSERT</code>. (Verified: the only
+    viewer-path D1 write is the origin-address <code>UPDATE</code>;
+    <code>INSERT INTO users</code> is OAuth login, not watching.)</li>
+  <li><strong>Holds:</strong> the token-signing key (mints publisher/viewer JWTs); <strong>the
+    content key</strong> (today); the broadcast records in D1 (<code>broadcast_events</code>,
+    incl. <strong>broadcaster geo</strong> — see §5d).</li>
+  <li><strong>Serves the client code</strong> → the deepest exposure: whoever serves the JS
+    <em>is</em> the client's trusted computing base and can, in principle, backdoor a targeted
+    user (see §6).</li>
+</ul>
+<p><strong>Net:</strong> transient IP visibility per request (not retained), plus whatever it
+persists in D1 (§5d), plus the code-delivery power.</p>
+
+<h3>5d. Data-at-rest inventory (what a subpoena/seizure yields)</h3>
+<table>
+  <thead><tr><th>Store</th><th>Holds</th><th>Identity-bearing?</th></tr></thead>
+  <tbody>
+    <tr><td>app <code>broadcast_events</code></td>
+      <td>stream id, relay host:port, <strong>broadcaster geo</strong>
+        (<code>geo_country/city/region/latitude/longitude</code>), content key (today),
+        timestamps</td>
+      <td class="warn">⚠ broadcaster location history — biggest cut opportunity (§7.1)</td></tr>
+    <tr><td>app <code>streams</code></td><td>require_auth, overlay, flags</td><td>low</td></tr>
+    <tr><td>app <code>users</code></td><td>OAuth identities (only if login is enabled)</td>
+      <td class="warn">⚠ real identities — avoid by staying accountless</td></tr>
+    <tr><td>broker <code>node_samples</code></td>
+      <td>customer + <strong>broadcast name</strong> + counts + time</td>
+      <td>pseudonymous broadcast history (enumerable)</td></tr>
+    <tr><td>broker <code>metering_samples</code></td><td>customer + relay-seconds (billing)</td>
+      <td>customer-level only</td></tr>
+    <tr><td>fleet box</td><td><em>(nothing persisted)</em></td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h2>6. The hard floors (be honest with users)</h2>
+<ol>
+  <li><strong>IPs are visible at the edges.</strong> The box that terminates a connection sees
+    the peer IP; you can decline to <em>store</em> it (we do), not to <em>see</em> it. Network
+    anonymity is the user's tool (Tor/VPN).</li>
+  <li><strong>The app is the client's TCB.</strong> On the plain web, whoever serves the client
+    JS can backdoor it per-user, undetectably. Browser-side encryption protects against a
+    <em>passive/honest</em> app, not an <em>active</em> one. The only real mitigation is a
+    <strong>verifiable client</strong> (open source + reproducible build + tamper-proof delivery
+    — extension / native / hash-pinned PWA). This is why open-sourcing is a privacy mechanism,
+    not just a business move.</li>
+  <li><strong>Prospective surveillance.</strong> Minimization defeats "hand over your history,"
+    not "start logging now" if a party still runs live infra the target uses. Only
+    <em>structural incapacity</em> (never collect the link) defeats that.</li>
+  <li><strong>Monetization reintroduces identity.</strong> Paid accounts create a
+    person ↔ pubkey ↔ payment record — exactly what gets compelled. If anonymity matters,
+    decouple payment from broadcast identity (prepaid credits / blind tokens), or accept "paid
+    tier ≠ anonymous tier."</li>
+</ol>
+
+<h2>7. Minimization roadmap (recommendations)</h2>
+<p>Ordered roughly by value-per-effort. None change the content-encryption engine.</p>
+
+<h3>7.1 Coarsen geo to US-state / non-US-country only ⭐ (requested)</h3>
+<p><strong>Requirement:</strong> the finest location granularity anywhere in the system should
+be:</p>
+<ul>
+  <li><strong>US viewers/broadcasters → US state only</strong> (e.g. <code>US-CA</code>).</li>
+  <li><strong>Non-US → country only</strong> (e.g. <code>DE</code>, <code>JP</code>).</li>
+  <li><strong>No city, no precise lat/lon, no sub-country detail outside the US.</strong></li>
+</ul>
+<p>Cloudflare hands the Worker precise <code>latitude/longitude</code> + city + region today;
+we currently both <strong>store</strong> it (<code>broadcast_events.geo_*</code>) and
+<strong>forward</strong> it to the broker (<code>brokerHints → hints.geo.{lat,lon}</code>).
+Coarsen at the <strong>e2eMoQ Worker boundary</strong> so precise geo is dropped before it
+is ever stored or forwarded:</p>
+<ul>
+  <li><strong>Derive the coarse label</strong> from <code>request.cf</code>:
+    <code>country === "US" ? `US-${regionCode}` : country</code>. Discard <code>city</code>,
+    <code>region</code> (name), <code>latitude</code>, <code>longitude</code>.</li>
+  <li><strong>Storage:</strong> replace the
+    <code>geo_country/city/region/latitude/longitude</code> columns in
+    <code>broadcast_events</code> with a single coarse <code>geo_region</code> string (or null).
+    Removes broadcaster location history from the compellable DB.</li>
+  <li><strong>Forwarding to the broker</strong> — two options:
+    <ul>
+      <li><em>(a, cleanest minimization)</em> forward only the coarse label; have the broker map
+        label → centroid for its haversine ranking. Broker change required.</li>
+      <li><em>(b, minimal change)</em> forward the <strong>state/country centroid</strong>
+        lat/lon (coarse, ~state-level precision) so the existing <code>geo.ts</code> haversine
+        ranker works unchanged. No broker change; precision is capped at state/country by
+        construction.</li>
+      <li>Recommend <strong>(b)</strong> to ship quickly, then <strong>(a)</strong> if we want
+        the broker to hold only labels.</li>
+    </ul>
+  </li>
+  <li><strong>Routing impact:</strong> negligible — nearest-fleet selection at state/country
+    granularity is more than enough to pick the right regional box.</li>
+</ul>
+
+<h3>7.2 Broker-side cuts</h3>
+<ul>
+  <li><strong>Drop <code>broadcast</code> (and <code>origin</code>) from
+    <code>node_samples</code>.</strong> Billing needs <code>customer</code> +
+    <code>relay_seconds</code> (<code>metering_samples</code>), <em>not</em> the broadcast name.
+    Removing it deletes the enumerable broadcast history from the broker's D1 while keeping
+    billing intact.</li>
+  <li><strong>Confirm Cloudflare Logpush is OFF</strong> for the broker (else the coarse-geo
+    assign log becomes retained).</li>
+</ul>
+
+<h3>7.3 App-side cuts</h3>
+<ul>
+  <li><strong>Stay accountless</strong> (no <code>users</code> rows) for as long as possible;
+    identity = ephemeral browser pubkey. If/when accounts are needed, keep them off the
+    broadcast-identity path (§6.4).</li>
+  <li><strong>Make live broadcast state ephemeral</strong> — reap <code>broadcast_events</code>
+    on <code>ended_at</code> (or TTL), rather than keeping an append-only history, so a seizure
+    yields only currently-live streams.</li>
+  <li><strong>Never log viewer IPs</strong> (already true — keep it that way).</li>
+</ul>
+
+<h3>7.4 Content-blindness vs the app (optional)</h3>
+<p>If "not even Cloudflare can decode" becomes a goal: mint the content key in the broadcaster's
+browser and deliver it via the share-link fragment (<code>#k=…</code>), and stop
+storing/returning <code>content_key</code>. ~40 lines, no change to the crypto engine.</p>
+
+<h3>7.5 Verifiable client (the TCB ceiling)</h3>
+<p>To make "trust the app less" real, distribute the open-source client as a
+<strong>verifiable artifact</strong> the user can confirm matches the audited source: a
+store-signed <strong>browser extension</strong>, a signed <strong>native app</strong>, or a
+<strong>hash-pinned PWA</strong>. Plain website delivery cannot make this claim (§6.2).</p>
+
+<h2>8. Possible model shift: per-broadcaster self-hosted app</h2>
+<p><em>(Under consideration.)</em> Instead of one large e2eMoQ serving everyone, each
+broadcaster runs <strong>their own small app instance</strong> (a much simpler moqplay), all
+calling the same broker and the same fleet.</p>
+<p><strong>What it buys for privacy:</strong></p>
+<ul>
+  <li><strong>No central party to compel.</strong> There is no single app that holds every
+    broadcast; each instance knows only <em>its owner's</em> streams. The concentration risk in
+    §5c/§5d disappears.</li>
+  <li><strong>Compartmentalization by default.</strong> Compelling one instance yields one
+    broadcaster's data, not the population's.</li>
+  <li><strong>Fungible + verifiable.</strong> If every instance is the same audited artifact,
+    trusting any particular operator matters less — the §6.2 / §7.5 direction.</li>
+</ul>
+<p><strong>Costs / open questions:</strong></p>
+<ul>
+  <li><strong>Deployment friction</strong> — each broadcaster must stand up a Worker (or
+    equivalent) and manage their signing key. A one-click deploy + a simplified codebase are
+    prerequisites.</li>
+  <li><strong>Discovery still needs a shared plane</strong> — viewers find a stream via the DHT
+    (<code>pubkey → {origin, name}</code>, non-enumerable) and/or the broker; the self-hosted
+    app removes the <em>central app</em>, not the need for discovery + provisioning.</li>
+  <li><strong>The broker remains central</strong> (your IP) — it still provisions capacity and
+    sees the pseudonymous broadcast history (§5b). Acceptable under this model because it is
+    already content-blind and identity-light; billing lives here.</li>
+  <li><strong>Support/UX</strong> — self-hosting is a power-user posture; most users may still
+    want a hosted instance, so this is likely an <em>option/tier</em>, not the only mode.</li>
+</ul>
+<p>This shift is the natural companion to open-sourcing moqplay + the fleet manager: it turns
+"trust one big app" into "run your own verifiable app," pushing the trust anchor from an
+operator to an auditable artifact.</p>
+
+<h2>9. Status at a glance</h2>
+<table>
+  <thead><tr><th>Property</th><th>Today</th><th>After the §7 recommendations</th></tr></thead>
+  <tbody>
+    <tr><td>Fleet can decode content</td><td class="ok">No</td><td>No</td></tr>
+    <tr><td>Broker can decode content</td><td class="ok">No</td><td>No</td></tr>
+    <tr><td>App can decode content</td><td class="warn">Yes (Option A)</td><td>No, if §7.4 adopted</td></tr>
+    <tr><td>Viewer IP stored anywhere</td><td class="ok">No</td><td>No</td></tr>
+    <tr><td>Broadcaster precise geo stored</td><td class="bad">Yes (broadcast_events)</td>
+      <td>No — US-state / country only (§7.1)</td></tr>
+    <tr><td>Broker holds enumerable broadcast history</td><td class="warn">Yes (node_samples)</td>
+      <td>No, if §7.2 adopted</td></tr>
+    <tr><td>Real identities stored</td><td>Only if login enabled</td><td>No (stay accountless)</td></tr>
+    <tr><td>Client is verifiable (anti-backdoor)</td><td class="bad">No (web delivery)</td>
+      <td>Only via §7.5</td></tr>
+  </tbody>
+</table>
+
+</div>
+</body>
+</html>

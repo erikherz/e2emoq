@@ -1,0 +1,69 @@
+/**
+ * e2eMoQ — Media over QUIC with end-to-end encryption.
+ *
+ * Ported from Wallflower, minus the parts that are not about the encryption: the seed
+ * economy, the abuse-report path, and the operator consoles that read either of them.
+ * What remains is the broadcast/watch pipeline, the E2E key derivation, live chat, the
+ * publish-code door and the kill switch.
+ *
+ * WORKER NAME. `e2emoq` is an EXISTING worker already serving e2emoq.com. The name here has
+ * to match it exactly or `wrangler deploy` creates a second worker and leaves the domain
+ * pointed at the old one — a failure that looks like "the deploy did nothing".
+ *
+ * Relay backend: brokered mode against the tinymoq fleet. Per broadcast the worker POSTs to
+ * <FLEET_ENDPOINT> with a Bearer credential, signs the returned per-stream key, points the
+ * player at the assigned relay, and releases on end. Fail-closed: with no credential set,
+ * nothing goes live.
+ *
+ * Setting MOQ_PRO_K / MOQ_PRO_JWK instead switches the media path to cdn.moq.pro and the
+ * FLEET_* vars below become inert — so those vars prove nothing about what is carrying media.
+ * Check `wrangler secret list`, not this file.
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "e2emoq",
+	"compatibility_date": "2025-01-01",
+	"main": "src/worker/index.ts",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"vars": {
+		"FLEET_MODE": "brokered",
+		"FLEET_ENDPOINT": "https://moqcdn.net/cdn/assign",
+		"PUBLISH_CODE_BATCH": "1",
+		"PUBLISH_CODE_TTL_DAYS": "30",
+		"PUBLISH_CODE_DELAY_HOURS": "0",
+		"PUBLISH_CODE_POW_BITS": "18"
+	},
+	// The reaper: closes viewing sessions whose heartbeat stopped, and broadcast rows whose
+	// publisher vanished without saying so. Every minute, because a session left open makes
+	// the live count fiction and the live count is on the broadcaster's own screen.
+	//
+	// It no longer expires reported frames — there are no reports here, and nothing in this
+	// database holds a single byte of anyone's broadcast.
+	"triggers": {
+		"crons": ["* * * * *"]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "e2emoq-db",
+			"database_id": "3bb2c072-7d99-4402-88cd-695f10e35739"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "CHAT_ROOMS",
+				"class_name": "ChatRoom"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["ChatRoom"]
+		}
+	]
+}

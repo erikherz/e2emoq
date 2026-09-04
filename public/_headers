@@ -1,0 +1,18 @@
+# Headers for anything Cloudflare's asset server answers directly.
+#
+# The Worker sets these too (see noFraming() in src/worker/index.ts), but it never sees most
+# requests: a path that matches a static asset — "/", "/trust", "/request", "/reports", every
+# file in dist — is served by the asset layer without invoking the Worker at all. Verified the
+# hard way: after adding the header in the Worker, /watch carried it and / did not.
+#
+# frame-ancestors 'none' is the second half of the overlay embed policy in
+# src/overlay-sanitize.ts. That side only permits a cross-origin https iframe, because a
+# cross-origin frame cannot reach window.parent and therefore cannot read the content key out
+# of a viewer's page. What it cannot prevent on its own is an allowed embed navigating ITSELF
+# to e2emoq.com afterwards, which would make it same-origin. This makes that arrival
+# render nothing. Both halves are required.
+#
+# Nothing here frames itself, so this costs no functionality.
+/*
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY

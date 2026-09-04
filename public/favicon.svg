@@ -1,0 +1,36 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="e2eMoQ">
+  <!--
+    A padlock whose body is the screen, with a play triangle cut out of it.
+
+    Drawn as ONE shape, not a lock with a triangle sitting on top. The triangle is a hole
+    (fill-rule: evenodd) rather than a lighter shape laid over the body, so the mark keeps
+    working on any background, in a browser tab, as a monochrome favicon, and when a viewer's
+    OS inverts it. A play glyph painted in a second colour would vanish the moment one of
+    those happened.
+
+    Sized for 16px first. The shackle is 5 units thick and clears the body by 2 units,
+    because at favicon scale a thinner arc closes up into a blob and the whole thing stops
+    reading as a lock — which is the entire point of the mark.
+  -->
+  <defs>
+    <linearGradient id="e2eSteel" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8fa3b8"/>
+      <stop offset="0.55" stop-color="#5b6f85"/>
+      <stop offset="1" stop-color="#39485a"/>
+    </linearGradient>
+    <linearGradient id="e2eShackle" x1="0" y1="4" x2="0" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b9c8d6"/>
+      <stop offset="1" stop-color="#7c8ea3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Shackle. Butt-capped and stopping level with the body's top edge, so it reads as
+       entering the body rather than resting behind it. -->
+  <path d="M20 28 V20 a12 12 0 0 1 24 0 v8"
+        fill="none" stroke="url(#e2eShackle)" stroke-width="5" stroke-linecap="butt"/>
+
+  <!-- Body + play triangle as a single evenodd path: the triangle is a hole. -->
+  <path fill-rule="evenodd" fill="url(#e2eSteel)"
+        d="M13 28 h38 a5 5 0 0 1 5 5 v21 a5 5 0 0 1 -5 5 h-38 a5 5 0 0 1 -5 -5 v-21 a5 5 0 0 1 5 -5 z
+           M27 34.5 v16 l14 -8 z"/>
+</svg>

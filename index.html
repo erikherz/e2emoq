@@ -1,0 +1,2112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>e2eMoQ</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <!-- iOS ignores the SVG favicon for a home-screen bookmark and draws a letter tile
+         instead. This is what stops that. Regenerate with scripts/make-touch-icon.mjs. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <script type="module" src="/src/main.ts"></script>
+    <style>
+        /* Theme CSS Variables */
+        :root {
+            /* Cold, hard, and deliberately unwelcoming. Near-black with a blue cast rather
+               than neutral: #06090d against e2eMoQ's #0a0a0a is barely a step in
+               lightness but a whole step in temperature, and temperature is the brief. */
+            --bg-primary: #06090d;
+            --bg-secondary: #0e141b;
+            --bg-tertiary: #161f29;
+            --bg-hover: #1f2b38;
+            --border-color: #1b2734;
+            --border-active: #3d5266;
+            --text-primary: #e3e9ef;
+            --text-secondary: #9aa9b8;
+            --text-muted: #6b7c8d;
+            --text-dimmed: #46566a;
+            --input-bg: #0e141b;
+            --input-border: #26333f;
+            --overlay-bg: rgba(3, 6, 10, 0.96);
+            --tooltip-bg: #0e141b;
+            --tooltip-border: #26333f;
+            /* Live. Cold cyan, not green: green reads as "safe/go", and what this state
+               actually means is that something is transmitting. */
+            --stream-id-bg: #06212b;
+            --stream-id-color: #4fd6e8;
+            /* Copy is the only route to the share link, so it is the one control in that row
+               that is not grey. Steel-white rather than gold — nothing warm survives here. */
+            --copy-gold: #9fb6cc;
+            --copy-gold-hi: #dbe7f2;
+            --video-bg: #000;
+        }
+
+        :root.light {
+            /* Not a warm daylight theme: overcast. Blue-grey paper, steel ink. */
+            --bg-primary: #eef2f6;
+            --bg-secondary: #e2e8ef;
+            --bg-tertiary: #d3dce5;
+            --bg-hover: #c2ced9;
+            --border-color: #cbd6e0;
+            --border-active: #7c93a8;
+            --text-primary: #0d151d;
+            --text-secondary: #3d4d5d;
+            --text-muted: #5e7183;
+            --text-dimmed: #8698a9;
+            --input-bg: #ffffff;
+            --input-border: #b9c7d4;
+            --overlay-bg: rgba(238, 242, 246, 0.96);
+            --tooltip-bg: #ffffff;
+            --tooltip-border: #cbd6e0;
+            --stream-id-bg: #cfe9ef;
+            --stream-id-color: #0d5566;
+            --copy-gold: #2f4356;
+            --copy-gold-hi: #0d151d;
+            --video-bg: #0d151d;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 2rem;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header {
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        /* Logo styling */
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .logo-icon {
+            width: 42px;
+            height: 42px;
+            /* No glow. A halo is what a warm brand does; this one gets a hard rim instead —
+               the mark should look machined, not lit. */
+            filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.6));
+        }
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #dbe7f2 0%, #3ab7cc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+        }
+        h1 .dot {
+            background: linear-gradient(135deg, #3ab7cc 0%, #00ffcc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .tagline {
+            font-style: italic;
+            font-size: 0.9rem;
+            text-decoration: none;
+            margin-left: 0.5rem;
+            background: linear-gradient(135deg, #dbe7f2 0%, #3ab7cc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            opacity: 0.7;
+            transition: opacity 0.2s ease;
+        }
+        .tagline:hover {
+            opacity: 1;
+        }
+        /* The wordmark/tagline gradients use bright gold+teal that pop on the dark
+           theme but wash out on white. Deepen them in light mode so they stay legible.
+           (Re-declare background-clip: the `background` shorthand resets it.) */
+        :root.light h1,
+        :root.light .tagline {
+            background: linear-gradient(135deg, #b8860b 0%, #00997e 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        :root.light h1 .dot {
+            background: linear-gradient(135deg, #00997e 0%, #00b894 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        h2 { font-size: 1rem; font-weight: 400; color: var(--text-secondary); margin-bottom: 1rem; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+        }
+        section {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border-color);
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+        video, canvas {
+            width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+            border-radius: 8px;
+            background: var(--video-bg);
+        }
+        footer {
+            margin-top: 2rem;
+            text-align: center;
+            color: var(--text-dimmed);
+            font-size: 0.875rem;
+        }
+        /* View visibility */
+        .hidden { display: none !important; }
+
+        /* Stream controls */
+        .stream-info {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+        .stream-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            /* The encrypted shield is prepended and the audience pill appended here at
+               runtime — so this row must be able to wrap and to shrink below its content
+               width (min-width defaults to auto on a flex item, which is what pushed the
+               row past the container edge). */
+            flex-wrap: wrap;
+            min-width: 0;
+        }
+        /* Present for assistive tech, absent from layout. Used where an icon replaced a word
+           that the control still needs in its accessible name. */
+        .sr-only {
+            position: absolute;
+            width: 1px; height: 1px;
+            padding: 0; margin: -1px;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            clip-path: inset(50%);
+            white-space: nowrap;
+            border: 0;
+        }
+        .copy-icon-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.25rem;
+            display: flex;
+            align-items: center;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        /* Live viewer-count badge + expandable panel on the broadcast page. */
+        .viewer-stats-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            cursor: pointer;
+            padding: 0.25rem 0.4rem;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .viewer-stats-badge:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }
+        .viewer-stats-badge #viewer-count {
+            color: var(--stream-id-color);
+            font-weight: 600;
+        }
+        /* The eye that replaced the word "watching". */
+        .viewer-stats-badge .vs-label {
+            display: inline-flex;
+            align-items: center;
+        }
+        .viewer-stats-badge .vs-label svg { width: 15px; height: 15px; }
+        .viewer-stats-panel {
+            width: 100%;
+            margin-top: 0.25rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.25rem 0.5rem;
+            max-height: 260px;
+            overflow-y: auto;
+        }
+        .viewer-stats-panel .stats-table {
+            margin: 0;
+        }
+        .copy-icon-btn:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }
+        .copy-icon-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+        .copy-icon-btn.copied {
+            color: #22c55e;
+        }
+        .copy-icon-btn.copy-failed {
+            color: #e0a3a3;
+        }
+        /* Scoped to #copy-btn, NOT to .copy-icon-btn: that class is shared with the small
+           inline info buttons elsewhere on the page, which should stay quiet and grey. */
+        #copy-btn {
+            color: var(--copy-gold);
+            padding: 0.3rem;
+        }
+        #copy-btn svg { width: 22px; height: 22px; }
+        #copy-btn:hover { color: var(--copy-gold-hi); }
+        /* Restated at id strength. An id beats two classes, so the plain .copy-icon-btn.copied
+           and .copy-failed rules above would lose to #copy-btn's colour and the tick and the
+           warning would both come out gold — the states that say "it worked" and "it did not"
+           rendered identically to each other and to resting. */
+        #copy-btn.copied { color: #22c55e; }
+        #copy-btn.copy-failed { color: #e0a3a3; }
+        /* Shown only when the clipboard refuses the write, so the broadcaster can still get
+           the link out by hand. Wide enough to select comfortably, and it carries the whole
+           link including the #k= fragment — a partial link would be a trap. */
+        .share-fallback {
+            flex: 1 1 260px;
+            min-width: 0;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.78rem;
+            padding: 3px 6px;
+            border: 1px solid #e0a3a3;
+            border-radius: 4px;
+            background: var(--input-bg);
+            color: var(--text-primary);
+        }
+        /* Inline variant for controls that sit beside text rather than beside the stream id. */
+        .copy-icon-btn.icon-sm { padding: 0.15rem; }
+        .copy-icon-btn.icon-sm svg { width: 14px; height: 14px; }
+        /* The rotate icon spins once on use, so a control whose whole job is "replace this"
+           confirms it did something even when the value it replaced looks similar. */
+        .copy-icon-btn.spun svg { animation: iconspin 0.45s ease; }
+        @keyframes iconspin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { .copy-icon-btn.spun svg { animation: none; } }
+
+        /* Broadcast view styling */
+        #broadcast-view section,
+        #broadcast-view .stream-info {
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        #broadcast-view section {
+            text-align: center;
+        }
+        #broadcast-view section h2 {
+            text-align: left;
+        }
+        #broadcast-view moq-publish {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Watch view styling */
+        #watch-view section {
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* --- Live chat: desktop = column right of the video; mobile = bottom overlay --- */
+        .video-chat-layout {
+            display: flex;
+            gap: 1rem;
+            width: 100%;
+            max-width: 1280px;
+            margin: 0 auto;
+            align-items: flex-start;
+            justify-content: center;
+        }
+        .video-chat-layout > section {
+            flex: 1 1 auto;
+            min-width: 0;
+            margin: 0 !important; /* override centered-column margins inside the flex row */
+        }
+        .chat-panel {
+            flex: 0 0 320px;
+            display: flex;
+            flex-direction: column;
+            height: 70vh;
+            max-height: 640px;
+            background: var(--bg-secondary, #1a1a1a);
+            border: 1px solid var(--input-border, #333);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .chat-panel.hidden { display: none; }
+        .chat-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid var(--input-border, #333);
+            font-size: 0.8rem;
+        }
+        .chat-title { font-weight: 600; color: var(--text-secondary, #a3a3a3); }
+        .chat-head.chat-offline .chat-title::after {
+            content: " · reconnecting…";
+            color: #f59e0b;
+            font-weight: 400;
+        }
+        .chat-name-btn, .chat-name-edit {
+            font-size: 0.75rem;
+            background: var(--bg-tertiary, #262626);
+            color: var(--text-primary, #fff);
+            border: 1px solid var(--input-border, #333);
+            border-radius: 999px;
+            padding: 2px 8px;
+            cursor: pointer;
+            max-width: 55%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .chat-name-edit { cursor: text; }
+        .chat-msgs {
+            flex: 1 1 auto;
+            overflow-y: auto;
+            padding: 0.5rem 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+            font-size: 0.85rem;
+            line-height: 1.35;
+        }
+        .chat-msg { overflow-wrap: anywhere; }
+        .chat-msg-name { font-weight: 600; color: #4fd6e8; margin-right: 0.4rem; }
+        .chat-msg-text { color: var(--text-primary, #e5e5e5); }
+        .chat-form {
+            display: flex;
+            gap: 0.4rem;
+            padding: 0.5rem;
+            border-top: 1px solid var(--input-border, #333);
+        }
+        .chat-text {
+            flex: 1 1 auto;
+            min-width: 0;
+            background: var(--input-bg, #0a0a0a);
+            border: 1px solid var(--input-border, #333);
+            border-radius: 6px;
+            padding: 0.45rem 0.6rem;
+            color: var(--text-primary, #fff);
+            font-size: 0.85rem;
+        }
+        .chat-send {
+            flex: 0 0 auto;
+            background: #3ab7cc;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 0 0.7rem;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .chat-send:hover { background: #00b89a; }
+
+        /* 16px is a threshold, not a taste.
+
+           iOS Safari zooms the page in when you focus an input whose font is under 16px. The
+           chat overlay is `position: fixed` at `width: 100%`, which is 100% of the LAYOUT
+           viewport — and zooming makes the VISUAL viewport narrower than that. The panel
+           therefore keeps its full width while the screen shows less of it, and the Send
+           button ends up past the right edge, reachable only by swiping the page sideways.
+           That is exactly how this was reported, and it reproduces on a device rather than in
+           headless Chrome, which does not implement the zoom.
+
+           Scoped to coarse pointers because the cause is the touch keyboard, not the width:
+           a 700px browser window has the same media width and none of the problem. */
+        @media (hover: none) and (pointer: coarse) {
+            .chat-text,
+            .chat-name-edit,
+            #pubkey { font-size: 16px; }
+        }
+
+        @media (max-width: 768px) {
+            .video-chat-layout { flex-direction: column; max-width: 100%; }
+            .video-chat-layout > section { width: 100%; }
+            /* Bottom overlay over the lower portion of the video (TikTok/Twitch style) */
+            .chat-panel:not(.hidden) {
+                position: fixed;
+                left: 0; right: 0; bottom: 0;
+                width: 100%;
+                height: auto;
+                flex: none;
+                max-height: none;
+                z-index: 60;
+                border: none;
+                border-radius: 14px 14px 0 0;
+                background: linear-gradient(to top, rgba(0,0,0,0.92) 55%, rgba(0,0,0,0.55) 85%, rgba(0,0,0,0));
+                backdrop-filter: blur(2px);
+                padding-bottom: env(safe-area-inset-bottom, 0);
+            }
+            .chat-panel:not(.hidden) .chat-head { border-bottom: none; }
+            /* Show only ~2 lines (older messages scroll off the top) and fade the top edge */
+            .chat-panel:not(.hidden) .chat-msgs {
+                flex: 0 1 auto;
+                max-height: 5.55rem; /* ~3 message lines (1.5x the prior 2-line height) */
+                -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22%);
+                mask-image: linear-gradient(to bottom, transparent 0, #000 22%);
+            }
+            .chat-panel:not(.hidden) .chat-msg-text {
+                color: #f5f5f5;
+                text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+            }
+        }
+
+        /* Passcode — the optional second secret, deliberately kept out of the share link. */
+        /* The passcode sits on the SAME line as its checkbox rather than in a panel below.
+           The toggle and the thing it controls read as one control that way, and the row
+           collapses to nothing when the toggle is off. */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        /* There is no narrow-phone rule here any more, and that is worth a sentence because
+           there was one for two years and it was rewritten this morning.
+
+           It shaved gaps and padding under 430px to keep the id row and Protect on one line —
+           first for three text labels, then again when day/night joined the row. Stripping the
+           row to Copy and the audience count took its content from 234px to 107px in 277px of
+           space on the narrowest phone measured. The tightening was buying pixels nothing
+           needs, and a cramped row is a real cost paid for an imaginary one, so it is gone
+           along with the crowd that justified it. scripts/e2e/stream-card-fits.mjs is what
+           would notice if that stopped being true. */
+        /* Protect — the door in front of the passcode.
+
+           Deliberately quieter than a capture toggle: this is a setting, not a live input, and
+           it sits in the stream header rather than the control bar. But it does carry state.
+           `.protect-armed` is the one that matters — a broadcaster who cannot see that a
+           passcode is on will send the link by itself and everyone gets a black player, so the
+           armed state has to be legible with the panel closed. */
+        .protect-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            /* Icon-only, so the padding is symmetric and the box is square-ish rather than a
+               pill sized around a word that is no longer there. */
+            padding: 5px 7px;
+            border: 1px solid var(--input-border);
+            border-radius: 999px;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .protect-btn:hover { border-color: var(--border-active); color: var(--text-primary); }
+        .protect-btn.protect-open { border-color: var(--border-active); color: var(--text-primary); }
+        .protect-btn.protect-armed {
+            background: rgba(0, 212, 170, 0.12);
+            border-color: #3ab7cc;
+            color: #3ab7cc;
+        }
+        .protect-panel {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .protect-panel.hidden { display: none; }
+        /* Matches the toggle labels beside it, minus the checkbox affordance — this one
+           states a fact rather than offering a choice. */
+        .passcode-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+        .passcode-box {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .passcode-box code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.95rem;
+            letter-spacing: 0.12em;
+            color: #4fd6e8;
+            user-select: all;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: rgba(51, 221, 192, 0.08);
+        }
+        /* Collapsed behind the ⓘ button: the guidance and the security disclosure are worth
+           reading once, not on every glance at a control bar. */
+        .passcode-hint {
+            margin: 8px 0 0;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            color: #d1d5db;
+            font-size: 0.75rem;
+            line-height: 1.5;
+            max-width: 620px;
+        }
+        .passcode-hint .passcode-hint-lead {
+            margin: 0 0 8px;
+            color: #9a9a9a;
+        }
+        .passcode-hint code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .stats-table th,
+        .stats-table td {
+            text-align: left;
+            padding: 0.75rem 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .stats-table th {
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+        .stats-table td {
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+        .stats-table td a {
+            color: #3ab7cc;
+            text-decoration: none;
+            font-family: monospace;
+        }
+        .stats-table td a:hover {
+            text-decoration: underline;
+        }
+        .stats-table .empty {
+            color: var(--text-dimmed);
+            text-align: center;
+            font-style: italic;
+        }
+        .stats-flag.clickable {
+            cursor: pointer;
+            transition: transform 0.15s ease;
+        }
+        .stats-flag.clickable:hover {
+            transform: scale(1.3);
+        }
+        .stats-login-required .auth-buttons {
+            justify-content: center;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-active);
+            transform: translateY(-1px);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .btn svg {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+        .btn-icon {
+            padding: 0.5rem;
+            gap: 0;
+        }
+        .btn-primary {
+            background: linear-gradient(180deg, #2b3a4a 0%, #16202b 100%);
+            border-color: #46596d;
+            color: var(--text-primary);
+            /* inset highlight along the top edge, then a hard shadow: a milled surface. */
+            box-shadow: inset 0 1px 0 rgba(190, 212, 232, 0.14), 0 1px 0 rgba(0, 0, 0, 0.5);
+        }
+        .btn-primary:hover {
+            background: linear-gradient(180deg, #35485c 0%, #1c2836 100%);
+            border-color: #6d879f;
+            box-shadow: inset 0 1px 0 rgba(190, 212, 232, 0.22), 0 1px 0 rgba(0, 0, 0, 0.5);
+        }
+
+        /* Auth UI */
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid var(--input-border);
+        }
+        .user-name {
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .user-flag {
+            font-size: 1.25rem;
+            line-height: 1;
+            cursor: default;
+        }
+        .user-flag.clickable {
+            cursor: pointer;
+            transition: transform 0.15s ease;
+        }
+        .user-flag.clickable:hover {
+            transform: scale(1.2);
+        }
+        .geo-tooltip {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 0.5rem;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .geo-tooltip.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+        .geo-tooltip-content {
+            background: var(--tooltip-bg);
+            border: 1px solid var(--tooltip-border);
+            border-radius: 8px;
+            padding: 0.75rem;
+            min-width: 200px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        .geo-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+            font-size: 0.8rem;
+        }
+        .geo-label {
+            color: var(--text-muted);
+        }
+        .geo-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .geo-action {
+            margin-top: 0.5rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid var(--tooltip-border);
+            font-size: 0.75rem;
+            color: #3ab7cc;
+            text-align: center;
+        }
+        #auth-container {
+            position: relative;
+        }
+        /* Auth buttons container */
+        .auth-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .btn-google {
+            background: #fff;
+            border-color: #dadce0;
+            color: #3c4043;
+            padding: 0.5rem 1rem;
+        }
+        .btn-google:hover {
+            background: #f8f9fa;
+            border-color: #dadce0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .btn-google svg {
+            width: 18px;
+            height: 18px;
+        }
+        /* Avatar placeholder for users without avatar */
+        .avatar-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #3ab7cc, #dbe7f2);
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+
+        /* Footer */
+        footer a {
+            color: #737373;
+            text-decoration: none;
+        }
+        footer a:hover {
+            color: #a3a3a3;
+            text-decoration: underline;
+        }
+        /* Status panels (Browser Support, Server Status) */
+        .server-panel {
+            margin-top: 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: left;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+        .server-panel.hidden {
+            display: none;
+        }
+        .server-status-summary {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-indicator.connected {
+            background: #22c55e;
+            box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+        }
+        .status-indicator.partial {
+            background: #eab308;
+            box-shadow: 0 0 6px rgba(234, 179, 8, 0.6);
+        }
+        .status-indicator.disconnected {
+            background: #ef4444;
+            box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+        }
+        /* A bare 8px dot is neither an obvious control nor a large enough target, so the
+           button carries the padding: ~26px of tappable area around a dot that still reads as
+           punctuation. The accessible name is what makes it legible at all to the ~8% of men
+           who cannot separate the red from the green — never let the colour be the only
+           channel. */
+        .status-ball {
+            background: none;
+            border: 0;
+            margin: 0;
+            padding: 8px;
+            line-height: 0;
+            cursor: pointer;
+            border-radius: 50%;
+            vertical-align: middle;
+        }
+        .status-ball .status-indicator {
+            transition: transform 0.15s ease, background-color 0.3s ease;
+        }
+        .status-ball:hover .status-indicator { transform: scale(1.3); }
+        .status-ball:focus-visible { outline: 2px solid #4fd6e8; outline-offset: 1px; }
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 0.25rem;
+        }
+        .status-dot.green {
+            background: #22c55e;
+        }
+        .status-dot.yellow {
+            background: #eab308;
+        }
+        .status-dot.red {
+            background: #ef4444;
+        }
+        .support-note {
+            margin-top: 0.75rem;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            font-style: italic;
+        }
+        .support-note a {
+            color: #4fd6e8;
+            text-decoration: underline;
+        }
+        .server-panel .details-btn {
+            background: none;
+            border: 1px solid var(--input-border);
+            color: var(--text-secondary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin-left: auto;
+        }
+        .server-panel .details-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .server-details {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+        .server-details.hidden {
+            display: none;
+        }
+        .server-details p {
+            margin-bottom: 0.5rem;
+        }
+        .latency-results {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+        }
+        .latency-results th,
+        .latency-results td {
+            padding: 0.4rem 0.6rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .latency-results td:last-child {
+            text-align: right;
+            white-space: nowrap;
+        }
+        .latency-results td:first-child {
+            width: 120px;
+            font-weight: 500;
+        }
+        .latency-results td:nth-child(2) {
+            width: 80px;
+        }
+        .latency-results th {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        .latency-results tr.selected td {
+            color: #22c55e;
+            font-weight: 500;
+        }
+        .latency-results tr.failed td {
+            color: #ef4444;
+        }
+
+        /* Login required overlay */
+        #login-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--overlay-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            z-index: 10;
+        }
+        .login-required {
+            text-align: center;
+            padding: 2rem;
+        }
+        .login-required h2 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+        .login-required p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+        .login-required .auth-buttons {
+            justify-content: center;
+            margin-bottom: 50px;
+        }
+        /* Watch stream section in login overlay */
+        .watch-stream-section {
+            margin-top: 50px;
+            margin-bottom: 1.5rem;
+        }
+        .watch-stream-section h2 {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+        }
+        .watch-stream-input-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        .watch-stream-input-row input {
+            width: 5.5ch;
+            padding: 0.5rem 0.5rem;
+            font-size: 1.1rem;
+            font-family: monospace;
+            text-align: center;
+            text-transform: lowercase;
+            letter-spacing: 0.1em;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 6px;
+            color: var(--text-primary);
+        }
+        .watch-stream-input-row input:focus {
+            outline: none;
+            border-color: #3ab7cc;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .watch-stream-input-row input::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.5;
+        }
+        .watch-stream-input-row button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem;
+            background: linear-gradient(135deg, #3ab7cc 0%, #009e85 100%);
+            border: 1px solid #3ab7cc;
+            border-radius: 6px;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .watch-stream-input-row button:hover {
+            background: linear-gradient(135deg, #4fd6e8 0%, #00b89a 100%);
+            border-color: #4fd6e8;
+            transform: translateY(-1px);
+        }
+        .login-divider {
+            display: flex;
+            align-items: center;
+            margin: 1.5rem 0;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        .login-divider::before,
+        .login-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border-color);
+        }
+        .login-divider span {
+            padding: 0 1rem;
+        }
+        #broadcast-view {
+            position: relative;
+            min-height: 500px;
+            margin-bottom: 15px;
+        }
+
+        /* MoQ core element base layout (headless light-DOM elements) */
+        moq-publish,
+        moq-watch {
+            display: block;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            width: 100%;
+        }
+        moq-publish video,
+        moq-watch canvas {
+            display: block;
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
+            border-radius: 8px;
+            background: #000;
+        }
+
+        /* Broadcast control bar (custom controls driving <moq-publish>) */
+        .publish-controls {
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        /* Why capture stopped, when nobody asked it to. Sits under the control bar rather
+           than over the video: a broadcaster whose camera just died is looking at the picture,
+           and covering it with the explanation would be its own small joke. */
+        .capture-notice {
+            max-width: 46rem;
+            margin: 0.6rem auto 0;
+            padding: 0.55rem 0.8rem;
+            /* Literal amber rather than a theme token: there is no warning token in this
+               palette, and a translucent tint over both backgrounds reads in either theme. */
+            border: 1px solid #b8860b;
+            border-radius: 8px;
+            background: rgba(184, 134, 11, 0.12);
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            line-height: 1.4;
+            text-align: center;
+        }
+        /* The way out, inside the sentence that explains why you need one. Inline rather
+           than a row of its own: it belongs to this message and disappears with it. */
+        .notice-action {
+            display: inline-block;
+            margin-left: 0.6rem;
+            padding: 0.25rem 0.7rem;
+            border: 1px solid #b8860b;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .notice-action:hover { background: rgba(184, 134, 11, 0.2); }
+        .publish-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            color: var(--text-primary);
+            font-size: 1.25rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 44px;
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+        .publish-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-active);
+            transform: translateY(-1px);
+        }
+        .publish-btn:active {
+            transform: translateY(0);
+        }
+        /* Combinable capture toggles: lit when ON, dim when OFF */
+        .publish-btn.toggle-btn { filter: grayscale(45%) brightness(0.78); opacity: 1; }
+        .publish-btn.toggle-btn:hover { filter: none; }
+        .publish-btn.toggle-btn.toggle-on {
+            filter: none;
+            background: linear-gradient(135deg, #3ab7cc 0%, #009e85 100%);
+            border-color: #3ab7cc;
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+        }
+        /* A glyph standing in for an icon ("@", "</>"): matched to the 18px SVGs either side
+           so it reads as one of them rather than as a label. In CSS, not inline on the
+           element, so the narrow-screen rules below can actually reach it. */
+        .publish-btn.glyph-btn {
+            font: 600 18px system-ui, -apple-system, sans-serif;
+        }
+        .publish-btn .btn-glyph {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Naming the controls.
+
+           Hidden by default and revealed only where there is room, which makes this the one
+           rule here that is a genuine trade rather than a refinement: a phone gets icons
+           alone. The alternative considered was an overflow menu hiding the less-common
+           controls, and it was rejected because it answers "too many unknowns" with "fewer,
+           plus a mystery box" — a label makes a feature more discoverable, a menu makes it
+           less. On a phone the grouping below carries that load on its own. */
+        .btn-label {
+            display: none;
+            font-size: 0.62rem;
+            font-weight: 600;
+            line-height: 1;
+            letter-spacing: 0.01em;
+        }
+        @media (min-width: 601px) {
+            .btn-label { display: block; }
+            .publish-btn {
+                flex-direction: column;
+                gap: 3px;
+                min-height: 52px;
+                padding: 0.45rem 0.6rem;
+            }
+        }
+        /* The row used to be spaced as three clusters — sources | what's drawn on the picture
+           | the room — with an extra margin in front of each group. That was a reasonable way
+           to organise SIX to eight decisions. The More menu left three: Camera · Audio · More,
+           and grouping three things into three groups says nothing that their being three
+           separate buttons did not already say. What is left of it is one uniform gap, which
+           is the only spacing a row this short can be read as deliberate. */
+
+        /* The More menu.
+
+           Camera and Audio are all anyone needs to go live, so the rest live in here. The row
+           is Camera · Audio · More until something advanced is switched on, at which point it
+           is promoted OUT of the panel and sits in the row, lit — see placeAdvanced() in
+           main.ts. That promotion is what makes hiding these safe: nothing that is running can
+           be out of sight, which was the objection when this was first proposed and rejected.
+
+           The panel is a plain block under the bar rather than a floating popover. It opens
+           into the gap above the passcode row, so it pushes nothing around and never covers
+           the video the broadcaster is watching to check their framing. */
+        .publish-more-panel {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 0.6rem;
+        }
+        .publish-more-panel.hidden { display: none; }
+        /* Unlike the toggles, More is not a state — it is a door. It gets the neutral
+           treatment so an open menu never reads as a fourth thing that is switched on. */
+        .publish-btn.more-btn { filter: grayscale(45%) brightness(0.78); }
+        .publish-btn.more-btn:hover,
+        .publish-btn.more-btn.more-open { filter: none; }
+        .publish-btn.more-btn.more-open { border-color: var(--border-active); }
+        /* Screen capture (getDisplayMedia) is unavailable on mobile browsers — hide the
+           screen toggle on touch devices (iOS / Android). */
+        @media (hover: none) and (pointer: coarse) {
+            .publish-btn.cap-screen { display: none; }
+        }
+        /* The `hidden` ATTRIBUTE has to beat .publish-btn's own display, or a control that
+           JavaScript has marked hidden stays on screen looking perfectly clickable. The UA
+           stylesheet's [hidden] rule loses to any class that sets display, which .publish-btn
+           does. Flip is set this way whenever the camera is off. */
+        .publish-btn[hidden] { display: none; }
+        /* Flip is a PHONE control. A desktop can have two webcams, but "front and back" means
+           nothing there — they are two cameras pointing wherever they were put, and Chrome
+           reports no facingMode for either, so the button would relabel itself with a
+           direction it cannot know. The inverse of cap-screen above. */
+        .publish-btn.cap-mobile { display: none; }
+        @media (hover: none) and (pointer: coarse) {
+            .publish-btn.cap-mobile:not([hidden]) { display: inline-flex; }
+        }
+        /* Narrow portrait phones: the bar is nowrap by design (a control that reflows to a
+           second row while you are live is worse than a tighter one), so it has to fit.
+
+           Only the GAP tightens. The buttons stay 44px — the smallest comfortable thumb
+           target — because that is affordable again now that the row is six buttons and not
+           seven: removing the redundant Stop took the widest layout from 9px of slack on a
+           390px iPhone to 51px. Spend that on the targets rather than on air between them.
+           If a seventh button is ever added here, this is the rule that has to give first,
+           and scripts/e2e/control-bar-fits.mjs will say so before a phone does. */
+        @media (max-width: 430px) {
+            /* The gap used to be squeezed to 2.4px here so the group margins could be 5.6px —
+               a ratio chosen to keep the clustering legible on a phone, where the labels are
+               already gone. With the groups gone there is nothing to spend that squeeze on,
+               and every seam is the same width again.
+
+               4.8px rather than the base 8px, because a phone still has to hold the widest the
+               row ever gets: every advanced control promoted, plus More. At 8px that lands its
+               widest line 1px inside a 375px screen and 4px inside a 402px one, and neither is
+               a margin — one wider glyph or a different system font puts it off the edge. This
+               is a smaller gap, not an uneven one: every seam moves together. */
+            .publish-controls { gap: 0.3rem; }
+            .publish-status { font-size: 1rem; }
+            /* The one place the nowrap rule gives.
+
+               Promotion can rebuild the whole old row — every advanced control on, plus More —
+               and that measures 352px inside 326px on a 390px iPhone. Something has to give,
+               and the candidates were: shrink the targets to 36px, or take a second line.
+
+               Wrapping wins here, and the original reasoning survives it. "A live control row
+               that reflows mid-broadcast is worse than a tighter one" was about a row that
+               moves on its own — on a viewport change, or as state arrives from elsewhere.
+               This one can only ever reflow on the tap that promoted a control, which is the
+               broadcaster's own deliberate act and reads as a consequence of it. Paying for
+               that with a 36px target on every button, including the two that most people
+               use, would be charging everyone for the rare case.
+
+               Scoped to .has-promoted so the resting row keeps nowrap exactly as before. */
+            .publish-controls.has-promoted { flex-wrap: wrap; row-gap: 0.3rem; }
+        }
+        /* iPhone SE and friends. 44px fits here to the pixel, with nothing spare — one wider
+           glyph or a different system font and the row is off the screen again. 40px buys
+           back ~36px of margin and is still a comfortable target. */
+        @media (max-width: 375px) {
+            /* The padding is what sets the width here, not min-width: an 18px icon inside
+               0.75rem of horizontal padding plus the border already measures 44px, so
+               lowering min-width alone changes nothing. Trim the padding and let min-width
+               catch the box at 40. */
+            .publish-btn { min-width: 40px; min-height: 40px; padding: 0.4rem; }
+        }
+        /* PiP composite preview (screen + draggable camera inset) */
+        .pip-canvas {
+            display: block;
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
+            border-radius: 8px;
+            background: #000;
+            /* The compositor sets the cursor per hit zone (move vs the eight resize handles).
+               A blanket `grab` here would promise the whole frame is draggable when only the
+               camera inset is, and it would also override the resize cursors. */
+            cursor: default;
+            touch-action: none;
+        }
+
+        /* Broadcast status indicator (emoji + hover tooltip) */
+        .publish-status {
+            position: relative;
+            font-size: 1.25rem;
+            line-height: 1;
+            cursor: default;
+            display: inline-flex;
+            align-items: center;
+        }
+        .publish-status::after {
+            content: attr(data-status-text);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            margin-bottom: 4px;
+        }
+        .publish-status:hover::after {
+            opacity: 1;
+        }
+
+        /* HTML overlay button and input */
+
+        /* Extras is HIDDEN, not removed.
+
+           It asked a broadcaster to write HTML in order to put a link in front of an audience,
+           which is a lot to ask; the Link control (a QR in the picture plus a tappable address
+           below it) does the thing they actually wanted. The editor, the sanitiser and the
+           viewer render path are all still here and still work — this hides the only way in,
+           so nothing new can be authored while streams already using it keep rendering.
+           Removing the code is a separate decision, deliberately not taken yet. */
+        .html-overlay-btn,
+        .html-overlay-container {
+            display: none !important;
+        }
+
+        .html-overlay-btn {
+            cursor: pointer;
+        }
+        /* Monospace belongs to the "</>" glyph, not to the button — before this was scoped,
+           the word "Extras" underneath rendered in bold monospace while every other label
+           was system-ui, which read as a different kind of control rather than the same one. */
+        .html-overlay-btn .btn-glyph {
+            font-family: monospace;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+        .html-overlay-btn.active {
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+        }
+        .html-overlay-container {
+            width: 100%;
+            max-width: 900px;
+            margin: 1rem auto 0;
+            display: none;
+        }
+        .html-overlay-container.visible {
+            display: block;
+        }
+        .html-overlay-input {
+            width: 100%;
+            min-height: 60px;
+            max-height: 300px;
+            padding: 0.75rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            resize: vertical;
+            overflow: auto;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .html-overlay-input:focus {
+            border-color: #3ab7cc;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .html-overlay-input:empty::before {
+            /* Names two concrete things rather than the mechanism. Someone who does not write
+               HTML reads "Enter HTML content" as not-for-them; a promo and a poll are what
+               they might actually want. */
+            content: "A promo, a poll, links — HTML shown below the video for viewers…";
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+        .html-overlay-hint {
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-align: left;
+        }
+        /* Said only when something was actually dropped, so it never becomes background noise
+           the author learns to scroll past. */
+        .html-overlay-warning {
+            margin-top: 0.5rem;
+            padding: 0.5rem 0.65rem;
+            border-radius: 6px;
+            border: 1px solid rgba(245, 158, 11, 0.45);
+            background: rgba(245, 158, 11, 0.08);
+            color: #fbbf24;
+            font-size: 0.75rem;
+            line-height: 1.45;
+            text-align: left;
+        }
+        .html-overlay-preview-label {
+            margin-top: 0.75rem;
+            font-size: 0.7rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            text-align: left;
+        }
+        /* Styled like the viewer's own overlay block, because that is what it is standing in
+           for — a preview that looks like the editor teaches the wrong thing. */
+        .html-overlay-preview {
+            margin-top: 0.35rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border: 1px dashed var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            text-align: center;
+            overflow-x: auto;
+        }
+        .html-overlay-preview img,
+        .html-overlay-preview video,
+        .html-overlay-preview iframe,
+        .viewer-html-overlay img,
+        .viewer-html-overlay video,
+        .viewer-html-overlay iframe {
+            max-width: 100%;
+        }
+
+        /* The broadcaster's Link, tappable.
+
+           Sized for a thumb first. The QR burned into the video serves anyone watching on
+           another screen; this row exists for the person holding the device the video is on,
+           who cannot scan it — so it is a full-width target, comfortably past the ~44px
+           minimum, rather than an inline link they would have to hit precisely. On a desktop
+           the same row reads as an ordinary button and takes a cursor.
+
+           Deliberately understated: teal on the site's own surfaces rather than anything
+           advert-shaped. It is the broadcaster's link, and a viewer should be able to tell
+           at a glance that it is theirs and not ours. */
+        .viewer-link-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            width: 100%;
+            max-width: 900px;
+            margin: 1rem auto 0;
+            padding: 0.85rem 1.1rem;
+            min-height: 48px;
+            box-sizing: border-box;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: #4fd6e8;
+            text-decoration: none;
+            font-size: 0.95rem;
+            transition: border-color 0.2s ease, background-color 0.2s ease;
+        }
+        .viewer-link-bar:hover,
+        .viewer-link-bar:focus-visible {
+            border-color: #3ab7cc;
+            background: var(--bg-tertiary, var(--bg-secondary));
+        }
+        .viewer-link-icon {
+            flex: 0 0 auto;
+            font-size: 1.1rem;
+            line-height: 1;
+        }
+        /* A long address truncates rather than wrapping to three lines or, worse, pushing the
+           row wider than the video. The full thing stays in the title attribute. */
+        .viewer-link-text {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Viewer HTML overlay display */
+        .viewer-html-overlay {
+            width: 100%;
+            max-width: 900px;
+            margin: 1rem auto 0;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            text-align: center;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+        .viewer-html-overlay:empty {
+            display: none;
+        }
+        .viewer-html-overlay a {
+            color: #3ab7cc;
+            text-decoration: underline;
+        }
+        .viewer-html-overlay a:hover {
+            color: #4fd6e8;
+        }
+        .viewer-html-overlay img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+
+        /* Typography for broadcaster-authored markup, in the viewer's block and in the
+           editor's preview of it.
+
+           This page opens with `* { margin: 0; padding: 0 }`, which is right for an app built
+           out of known components and wrong for a region holding someone else's HTML: a <ul>
+           inherits no indent and loses its markers off the edge, an <h2> renders at heading
+           size with no space around it. Allowing the tag is only half of rendering it, so the
+           defaults are restored here and nowhere else. */
+        .viewer-html-overlay :is(h1, h2, h3, h4, h5, h6),
+        .html-overlay-preview :is(h1, h2, h3, h4, h5, h6) {
+            margin: 0.6em 0 0.35em;
+            line-height: 1.25;
+            font-weight: 700;
+        }
+        .viewer-html-overlay :is(p, ul, ol, dl, pre, blockquote, table, figure),
+        .html-overlay-preview :is(p, ul, ol, dl, pre, blockquote, table, figure) {
+            margin: 0.6em 0;
+        }
+        .viewer-html-overlay :is(ul, ol),
+        .html-overlay-preview :is(ul, ol) {
+            padding-left: 1.5em;
+        }
+        .viewer-html-overlay li,
+        .html-overlay-preview li { margin: 0.2em 0; }
+        /* Structured blocks read left-aligned even inside a centred overlay; a centred table
+           or bullet list is unreadable. */
+        .viewer-html-overlay :is(ul, ol, dl, table, pre, blockquote),
+        .html-overlay-preview :is(ul, ol, dl, table, pre, blockquote) {
+            text-align: left;
+        }
+        .viewer-html-overlay :is(ul, ol, dl),
+        .html-overlay-preview :is(ul, ol, dl) {
+            display: inline-block;
+        }
+        .viewer-html-overlay blockquote,
+        .html-overlay-preview blockquote {
+            padding-left: 0.9em;
+            border-left: 3px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+        .viewer-html-overlay hr,
+        .html-overlay-preview hr {
+            margin: 0.9em 0;
+            border: 0;
+            border-top: 1px solid var(--border-color);
+        }
+        .viewer-html-overlay table,
+        .html-overlay-preview table {
+            border-collapse: collapse;
+            margin-inline: auto;
+        }
+        .viewer-html-overlay :is(th, td),
+        .html-overlay-preview :is(th, td) {
+            padding: 0.35em 0.6em;
+            border: 1px solid var(--border-color);
+        }
+        .viewer-html-overlay :is(pre, code),
+        .html-overlay-preview :is(pre, code) {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9em;
+        }
+        .viewer-html-overlay pre,
+        .html-overlay-preview pre {
+            padding: 0.6em 0.8em;
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            overflow-x: auto;
+        }
+        /* An embed with no width of its own would collapse to a sliver. */
+        .viewer-html-overlay iframe,
+        .html-overlay-preview iframe {
+            width: 100%;
+            min-height: 320px;
+            border: 0;
+            border-radius: 6px;
+        }
+
+        /* Theme toggle button */
+        .theme-toggle {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 0.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            color: var(--text-primary);
+        }
+        .theme-toggle:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-active);
+        }
+        .theme-toggle svg {
+            width: 18px;
+            height: 18px;
+        }
+        /* The icon shows the ACTION (the mode you'll switch TO), not the current mode:
+           dark mode shows a sun (click to go light); light mode shows a moon. */
+        .theme-toggle .sun-icon { display: block; }
+        .theme-toggle .moon-icon { display: none; }
+        :root.light .theme-toggle .sun-icon { display: none; }
+        :root.light .theme-toggle .moon-icon { display: block; }
+        /* On the broadcast page this same button is moved out of the site header and into the
+           stream card, immediately left of Protect (see initBroadcast in main.ts). There it has
+           to read as part of that row rather than as a header control that wandered in, so it
+           borrows .protect-btn's geometry exactly: same pill, same padding, same 15px icon.
+
+           Scoped to .toggle-row rather than changed on .theme-toggle itself, because it is
+           still the header control on the landing and watch pages, where the larger square
+           matches the nav button beside it. */
+        .toggle-row .theme-toggle {
+            border-radius: 999px;
+            padding: 5px 7px;
+            color: var(--text-secondary);
+        }
+        .toggle-row .theme-toggle:hover { color: var(--text-primary); }
+        .toggle-row .theme-toggle svg { width: 15px; height: 15px; }
+
+        /* ===== Header nav buttons (Broadcast / Watch, upper right) ===== */
+        .nav-btn {
+            padding: 0.6rem 1.2rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .nav-btn svg { width: 18px; height: 18px; }
+        /* Was #06231d — near-black, chosen when this button was a bright mint pill. On the
+           steel gradient that is dark text on a dark surface: 1.4:1, illegible. An ID selector,
+           so it beat .btn-primary's colour and the whole label vanished. */
+        #nav-broadcast { color: var(--text-primary); }
+
+        /* ===== Landing / promo page ===== */
+        .hero {
+            text-align: center;
+            padding: 3.5rem 1.5rem 3rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            margin-bottom: 2.5rem;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+        .hero-title {
+            font-size: 2.4rem;
+            font-weight: 700;
+            line-height: 1.15;
+            letter-spacing: -0.02em;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #dbe7f2 0%, #3ab7cc 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+        :root.light .hero-title {
+            background: linear-gradient(135deg, #b8860b 0%, #00997e 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+        .hero-features {
+            list-style: none;
+            width: fit-content;
+            max-width: 90%;
+            margin: 0.5rem auto 0;
+            padding: 1rem 1.75rem;
+            background: var(--bg-tertiary, #262626);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            text-align: left;
+            color: var(--text-primary);
+            font-size: 1.1rem;
+            display: grid;
+            gap: 0.55rem;
+        }
+        .hero-features li {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .hero-features .nb { white-space: nowrap; }
+        .hero-features li::before {
+            content: "\2713"; /* checkmark */
+            color: #3ab7cc;
+            font-weight: 700;
+            flex: 0 0 auto;
+        }
+        :root.light .hero-features li::before { color: #00997e; }
+
+        .promo-section { margin-bottom: 2.75rem; }
+        .promo-heading {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .promo-heading::before {
+            content: "";
+            width: 4px;
+            height: 1.1em;
+            border-radius: 2px;
+            background: linear-gradient(180deg, #dbe7f2, #3ab7cc);
+        }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 1.25rem;
+        }
+        .info-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.4rem;
+            transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.3s ease;
+        }
+        .info-card:hover { transform: translateY(-3px); border-color: var(--border-active); }
+        .info-card .card-icon {
+            font-size: 1.5rem; margin-bottom: 0.6rem; display: block;
+            /* Emoji are vendor artwork in vendor colours. Strip the colour and dim them to
+               the same register as the body text; they are labels, not illustrations. */
+            filter: grayscale(1) brightness(1.35) contrast(0.85); opacity: 0.65;
+        }
+        .info-card h4 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.45rem; color: #7fc6d6; }
+        :root.light .info-card h4 { color: #17566a; }
+        .info-card h4 .card-link { color: inherit; text-decoration: none; }
+        .info-card h4 .card-link:hover { text-decoration: underline; }
+        .info-card p { font-size: 0.9rem; line-height: 1.55; color: var(--text-secondary); margin: 0; }
+        /* Links in card BODY text had no rule and fell through to the global link colour,
+           which sits too close to the body text to read. Match the card heading in both
+           themes — the light-theme value matters as much, since that is where a
+           near-invisible link is most likely to go unnoticed by whoever is editing. */
+        .info-card p a { color: #3ab7cc; text-decoration: none; font-weight: 500; }
+        .info-card p a:hover { text-decoration: underline; }
+        :root.light .info-card p a { color: #00997e; }
+        .info-card code { font-family: monospace; font-size: 0.82em; background: var(--bg-tertiary); padding: 1px 5px; border-radius: 4px; }
+
+        .security-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid #3ab7cc;
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+        .security-panel p { color: var(--text-secondary); line-height: 1.6; margin: 0 0 0.85rem; }
+        .security-panel .pdf-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            color: #3ab7cc;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        :root.light .security-panel .pdf-link { color: #00997e; }
+        .security-panel .pdf-link:hover { text-decoration: underline; }
+
+        /* PHONE PORTRAIT: logo and the light/dark toggle share the first line; Broadcast gets
+           a line of its own, full width and taller.
+
+           `display: contents` on .header-right is what makes that possible without moving any
+           markup: it dissolves the wrapper so its children become flex items of <header>
+           itself, which is the only way the toggle can sit beside the logo while Broadcast
+           breaks to the next line. The header is already flex + wrap + space-between, and
+           space-between applies PER LINE, so the two on line one push apart on their own.
+           `order` then gives them an arrangement the DOM does not have. */
+        @media (max-width: 600px) and (orientation: portrait) {
+            header { gap: 0.7rem; }
+            .header-right { display: contents; }
+            .logo { order: 1; }
+            #theme-toggle { order: 2; margin-left: auto; }
+            /* If the byline shows at all (it is hidden on the landing page) it takes its own
+               line rather than squeezing between the two above. */
+            .tagline { order: 3; flex-basis: 100%; margin-left: 0; }
+            #nav-broadcast {
+                order: 4;
+                flex: 1 0 100%;
+                justify-content: center;
+                padding: 0.9rem 1.2rem;
+                font-size: 1.05rem;
+                border-radius: 10px;
+            }
+            #nav-broadcast svg { width: 20px; height: 20px; }
+            #auth-container { order: 5; }
+        }
+
+        /* PHONE LANDSCAPE: height is the scarce dimension, so the button does not go full
+           width. 30vw is measured against the VIEWPORT deliberately -- .header-right is still
+           a real wrapper here, so a percentage would resolve against it instead. */
+        @media (orientation: landscape) and (max-height: 500px) {
+            #nav-broadcast {
+                width: 30vw;
+                justify-content: center;
+                padding: 0.8rem 1rem;
+                font-size: 1.05rem;
+                border-radius: 10px;
+            }
+            #nav-broadcast svg { width: 20px; height: 20px; }
+        }
+
+        @media (max-width: 600px) {
+            /* The outer gutter was 2rem — 64px of a 390px phone spent on nothing, which is
+               most of what was pushing the last two bullets onto second lines. Traded down to
+               a normal phone gutter, and the saving handed to the box instead: its own padding
+               goes UP, so the text sits further from the border while having more room. */
+            body { padding: 0.5rem; }
+            .hero { padding-left: 0.5rem; padding-right: 0.5rem; }
+            .hero-title { font-size: clamp(1.25rem, 7vw, 1.9rem); text-wrap: balance; }
+            .nav-btn { padding: 0.5rem 0.9rem; font-size: 0.9rem; }
+            /* Tighten the feature box so "Sub-second video and chat" fits one line. The box
+               was capped at 90% of a hero that was itself inset 1.5rem, which spent ~40px on
+               nothing; at 100% with slimmer padding the first bullet fits from 360px up. The
+               other two need ~100px more than any phone has and are left to wrap. */
+            .hero-features { max-width: 100%; padding: 0.85rem 0.85rem; font-size: 1rem; gap: 0.45rem; }
+            .hero-features li { gap: 0.5rem; }
+        }
+
+        /* Landscape phones (short viewport, wider than the 600px breakpoint): tighten the
+           hero so the headline fits one line and the box doesn't eat the limited height. */
+        @media (orientation: landscape) and (max-height: 500px) {
+            .hero { padding: 1.5rem 1.25rem 1.25rem; }
+            .hero-title { font-size: 1.8rem; margin-bottom: 0.75rem; }
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <a href="/" class="logo">
+                <img class="logo-icon" src="/favicon.svg" alt="" width="42" height="42">
+                <h1>e2e<span class="dot">MoQ</span></h1>
+            </a>
+            <span class="tagline" id="site-tagline">Media over QUIC with end-to-end encryption</span>
+            <div class="header-right">
+                <a href="/broadcast" class="btn btn-primary nav-btn" id="nav-broadcast">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>
+                    Broadcast
+                </a>
+<!-- The "Watch" nav entry and its /watch dialler page were removed. There is nothing a
+                 viewer can usefully type: a bare stream id carries no key and now cannot even
+                 obtain a token, and the form rejected a pasted share link outright. Watching
+                 starts by opening the link you were given. -->
+                <button id="theme-toggle" class="theme-toggle" title="Toggle theme">
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                    </svg>
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"/>
+                        <line x1="12" y1="1" x2="12" y2="3"/>
+                        <line x1="12" y1="21" x2="12" y2="23"/>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                        <line x1="1" y1="12" x2="3" y2="12"/>
+                        <line x1="21" y1="12" x2="23" y2="12"/>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                    </svg>
+                </button>
+                <div id="auth-container"></div>
+            </div>
+        </header>
+
+        <!-- Landing / promo view (bare "/") -->
+        <div id="landing-view" class="hidden">
+            <section class="hero">
+                <h2 class="hero-title">Media over QUIC with end-to-end encryption</h2>
+                <ul class="hero-features">
+                    <li>Browser-encrypted WebCodecs, streamed via WebTransport</li>
+                    <li>The key lives in the link fragment &mdash; a server never receives it</li>
+                    <li>Sub-second glass-to-glass. No app, no account, no recording</li>
+                </ul>
+            </section>
+
+            <!-- The positioning argument, placed before the technology: what this is FOR
+                 matters more to a first-time visitor than what it is built on. -->
+            <div class="promo-section">
+                <h3 class="promo-heading">Built on open standards</h3>
+                <div class="card-grid">
+                    <div class="info-card">
+                        <span class="card-icon">📡</span>
+                        <h4><a href="https://moq.dev/" target="_blank" rel="noopener" class="card-link">Media over QUIC</a></h4>
+                        <p>An IETF transport for live media built on QUIC's multiplexed, loss-tolerant streams and built-in TLS&nbsp;1.3. Publish/subscribe tracks and relay fan-out deliver sub-second, glass-to-glass latency on the open internet.</p>
+                    </div>
+                    <div class="info-card">
+                        <span class="card-icon">🌐</span>
+                        <h4>MoQ.Pro Video Network</h4>
+                        <p>e2eMoQ streams ride <strong><a href="https://moq.pro">moq.pro</a></strong>, Luke Curley's hosted Media-over-QUIC network. Global relays with WebTransport and automatic WebSocket fallback, plus built-in reconnect &mdash; so a broadcast plays in every modern browser, including iPhone, and rides out flaky networks.</p>
+                    </div>
+                    <!-- Replaced the MoQplay card, which pointed at this codebase's ancestor
+                         rather than anything a visitor could use. What a broadcaster wants to
+                         know here is what protects them. -->
+                    <div class="info-card">
+                        <span class="card-icon">🔒</span>
+                        <h4><a href="/trust" class="card-link">How you're protected</a></h4>
+                        <p>Your browser encrypts every frame before it leaves. The key is derived from a secret we never receive &mdash; the one living in your share link &mdash; so we cannot watch your broadcast. Add a passcode under Protect and a viewer needs that too. No account, no email, no location data is stored.</p>
+                        <!-- Two doors, one room. The mechanism lives in the footer panel and
+                             is NOT duplicated here: this link opens that same panel. The pair
+                             is the point — "how it works" and "what we can see" are the two
+                             questions this card raises, and answering only one of them left a
+                             reader to discover the other by accident. -->
+                        <p><a href="#" id="card-howitworks-link" class="card-link">How it works &darr;</a>
+                           &nbsp;&middot;&nbsp;
+                           <a href="/trust" class="card-link">What we can and cannot see &rarr;</a></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- "How it works" moved to a footer panel (#howitworks-panel) so it is reachable
+                 from every view rather than only the landing page. -->
+
+        </div>
+
+
+        <!-- Broadcast View -->
+        <div id="broadcast-view" class="hidden">
+            <div class="stream-info">
+                <div class="stream-header">
+                    <!-- STRIPPED TO TWO CONTROLS on 2026-08-30. The shield, the stream icon,
+                         the visible id and the New-link button all left this row. What is left
+                         is the one thing a broadcaster does here — get the link out — and the
+                         one thing they watch: how many people arrived.
+
+                         The id was the least useful of the four. It is not the share link and
+                         never was: without the `#k=` fragment it decrypts nothing, so a
+                         broadcaster who read it off the screen and sent it handed over
+                         something that cannot work. Copy is the only correct way to pass this
+                         stream on, and it is now the only way offered. -->
+                    <!-- NOT display:none, and not deleted. A screen reader announcing this
+                         card would otherwise have no name for the broadcast at all; .sr-only
+                         keeps the name and costs no layout. (It also used to be how the seeds
+                         client learned which stream was live. That reader is gone; the
+                         accessible name is the reason it stays.) -->
+                    <span id="stream-id" class="sr-only">loading...</span>
+                    <!-- Bigger and gold since the id left: it is the only route to the share
+                         link, so it should not look like one more grey icon among several. -->
+                    <button id="copy-btn" class="copy-icon-btn" title="Copy share link">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                    </button>
+                    <button id="viewer-stats-toggle" class="viewer-stats-badge" type="button" aria-expanded="false" aria-controls="viewer-stats-panel" title="Active viewers — click for details">
+                        <!-- An eye rather than the word "watching". The NUMBER keeps its
+                             place, because that is the part that varies and has to be
+                             readable at a glance; the eye only says what the number counts.
+                             The button already carries the full sentence as its title. -->
+                        <span class="vs-label" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </span>
+                        <span id="viewer-count">0</span>
+                        <!-- Kept for screen readers only. Dropping the word entirely would
+                             leave this button announcing itself as "0". -->
+                        <span class="sr-only">watching</span>
+                    </button>
+                </div>
+                <div id="viewer-stats-panel" class="viewer-stats-panel hidden" role="region" aria-label="Active viewers"></div>
+                <!-- Chat is not a property of the link, so it does not belong in this header
+                     next to the stream id and the passcode. It is something the broadcaster
+                     switches on for the room, alongside the camera and the overlay editor, so
+                     its button lives in the capture control bar under the video. -->
+                <div class="toggle-row">
+                    <!-- Protect: the door in front of the passcode.
+
+                         Opt-in and OFF by default as of 2026-08-28. The passcode row used to
+                         sit here open, which put a decision in front of every first-time
+                         broadcaster before they had done anything — and a second secret to
+                         deliver is a real cost, not a free safety net.
+
+                         The button is NOT merely a disclosure triangle: it lights up whenever a
+                         passcode is actually armed. That matters more here than for the More
+                         menu. A broadcaster who does not realise a passcode is on will send the
+                         link on its own, and everyone they sent it to gets a black player. The
+                         state has to be visible with the panel shut.
+
+                         The choice still locks at go-live, because `p=1` is baked into every
+                         link already copied and toggling after that strands those viewers. -->
+                    <!-- Icon only. The state is carried by the SHACKLE, not by the colour:
+                         open padlock = no passcode, closed = one is armed. Colour alone
+                         would leave the single most consequential state on this page
+                         invisible to anyone who cannot distinguish teal from grey — and
+                         "armed" is exactly the state a broadcaster must not miss, since
+                         sending the link without the passcode blacks out every viewer.
+                         syncProtect() in main.ts swaps the path and the accessible name. -->
+                    <button type="button" id="protect-btn" class="protect-btn"
+                            aria-expanded="false" aria-controls="protect-panel"
+                            aria-label="Protect — no passcode set. The link alone lets people watch."
+                            title="Protect — no passcode set. The link alone lets people watch.">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15" aria-hidden="true">
+                            <path id="protect-icon-path" d="M7 9V6a5 5 0 0 1 9.9-1 1 1 0 1 1-2 .4A3 3 0 0 0 9 6v3h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h1z"/>
+                        </svg>
+                    </button>
+                    <div id="protect-panel" class="protect-panel hidden">
+                    <label class="passcode-label" for="passcode-enabled">
+                        <input type="checkbox" id="passcode-enabled"
+                               style="margin-right:6px;vertical-align:-1px;">Passcode
+                    </label>
+                    <div id="passcode-box" class="passcode-box">
+                        <code id="passcode-value"></code>
+                        <button type="button" id="passcode-copy" class="copy-icon-btn icon-sm" title="Copy passcode">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                        </button>
+                        <button type="button" id="passcode-new" class="copy-icon-btn icon-sm" title="New passcode — re-keys the stream and cuts off viewers using the old one">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                                <polyline points="21 3 21 9 15 9"/>
+                            </svg>
+                        </button>
+                        <button type="button" id="passcode-info" class="copy-icon-btn icon-sm" aria-expanded="false" aria-controls="passcode-hint" title="How this protects you">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="12" y1="16" x2="12" y2="12"/>
+                                <line x1="12" y1="8" x2="12.01" y2="8"/>
+                            </svg>
+                        </button>
+                    </div>
+                    </div><!-- /#protect-panel -->
+                </div>
+                <div id="passcode-hint" class="passcode-hint hidden" role="region" aria-label="How this protects you">
+                    <p class="passcode-hint-lead">
+                        Send this separately from the link. The refresh icon re-keys the stream
+                        and cuts off viewers using the old passcode.
+                    </p>
+                </div>
+            </div>
+
+            <div class="video-chat-layout">
+                <section>
+                    <moq-publish announce="source">
+                        <video muted autoplay playsinline></video>
+                    </moq-publish>
+                </section>
+                <div id="broadcast-chat" class="chat-panel hidden"></div>
+            </div>
+        </div>
+
+        <!-- Watch View -->
+        <div id="watch-view" class="hidden">
+            <div class="video-chat-layout">
+                <section>
+                    <moq-watch muted visible="always">
+                        <canvas></canvas>
+                    </moq-watch>
+                </section>
+                <div id="watch-chat" class="chat-panel hidden"></div>
+            </div>
+        </div>
+
+        <!-- TinyMoQ is gone from here deliberately: streams ride moq.pro, and the fleet path
+             is dormant config. Naming it in the footer of every page claimed a dependency
+             that is not in the media path. -->
+        <footer>
+            <!-- The status ball is now the ONLY thing in this row, and it is hidden on the
+                 landing page, where there is no connection and anything it reported would be
+                 invented. So the row is empty there — which is why the id sits on the <p>
+                 itself rather than on a span inside it: hiding the span would have left an
+                 empty paragraph holding its own margins open under the page.
+
+                 "How it works" used to live here. It is reached from the "How you're
+                 protected" card instead, next to the /trust link, because those are the two
+                 questions that card raises and answering them from one place beats a footer
+                 row nobody scans. Someone mid-broadcast is not reading an architecture essay;
+                 what they may want, at a glance, is whether the thing is still up. -->
+            <p id="server-status-item">
+                <button type="button" id="server-link" class="status-ball" aria-label="Server status" title="Server status"><span class="status-indicator disconnected" id="status-ball-dot"></span></button>
+            </p>
+            <div id="howitworks-panel" class="server-panel hidden">
+                <div class="security-panel">
+                    <p>When you go live, your browser captures and encodes the media with native <strong>WebCodecs</strong>, <strong>encrypts every frame</strong>, and publishes it to the <strong>moq.pro</strong> CDN over <strong>QUIC</strong>. Viewers subscribe from the nearest relay and decrypt in the page. The CDN carries only ciphertext it cannot read.</p>
+                    <p>The key never reaches us. It is derived in your browser from a secret we never receive: it lives in the part of the share link after the <code>#</code>, which browsers never send to a server. So the link is what decrypts your broadcast &mdash; treat it as the key it is. Switching on <strong>Protect</strong> mixes in a second secret, the <strong>passcode</strong>, which is deliberately not in the link: send the two by different routes and intercepting either alone is worthless. Either way, <strong>we could not watch your broadcast if we were asked to.</strong></p>
+                    <p>Each broadcast is reached through a short-lived <strong>moq.pro</strong> access token minted by e2eMoQ's own Cloudflare Worker. It is signed with a key whose public half alone was given to moq.pro, so the CDN can check our tokens and cannot forge one. Live chat is encrypted the same way: messages and display names are sealed in your browser under a key derived from the same link, so the chat server relays text it cannot read. That also means there is no moderation of chat &mdash; there is nothing for us to moderate.</p>
+                    <!-- Both further-reading links sit at the foot of this panel rather than in
+                         the footer row. Someone who has just read what the transport is and what
+                         protects them is the person who might want either; a visitor scanning the
+                         footer is not. -->
+                    <p><a href="https://moq.dev/" target="_blank" rel="noopener">More about Media over QUIC &rarr;</a>
+                       &nbsp;&middot;&nbsp;
+                       <a href="#" id="support-link">Browser Support</a>
+                       &nbsp;&middot;&nbsp;
+                       <a href="#" id="howitworks-close">Close</a></p>
+                </div>
+            </div>
+            <div id="support-panel" class="server-panel hidden"></div>
+            <div id="server-panel" class="server-panel hidden"></div>
+        </footer>
+    </div>
+</body>
+</html>

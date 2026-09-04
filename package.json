@@ -1,0 +1,31 @@
+{
+  "name": "moqplay",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler deploy",
+    "keygen": "node scripts/moq-keygen.mjs",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.6.0",
+    "typescript": "^5.5.2",
+    "vite": "^7.3.0",
+    "wrangler": "^4.54.0"
+  },
+  "dependencies": {
+    "@kixelated/libavjs-webcodecs-polyfill": "^0.5.5",
+    "@moq/publish": "0.2.15",
+    "@moq/watch": "0.2.17",
+    "@moq/web-transport-ws": "0.1.2",
+    "dompurify": "^3.4.13"
+  },
+  "overrides": {
+    "@moq/net": "0.1.5",
+    "@moq/hang": "0.2.11"
+  }
+}

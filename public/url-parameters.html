@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>e2eMoQ — Viewer URL parameters &amp; transport</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #e2e2e2;
+    --card: #f7f7f7; --code-bg: #f0f0f0; --accent: #0a7d63; --accent2: #00b894;
+    --warn-bg: #fff8e6; --warn-br: #e8c76a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131313; --fg: #e8e8e8; --muted: #9a9a9a; --border: #2c2c2c;
+      --card: #1b1b1b; --code-bg: #202020; --accent: #22c5a0; --accent2: #2ee0b8;
+      --warn-bg: #241f11; --warn-br: #5a4a1e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem 5rem; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.9rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.3rem; margin: 2.4rem 0 .6rem; padding-top: .6rem; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.05rem; margin: 1.6rem 0 .4rem; }
+  .lede { color: var(--muted); font-size: 1.05rem; margin: 0 0 1rem; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em;
+    background: var(--code-bg); padding: .12em .4em; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: .9rem 1rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0 1rem; font-size: 0.94rem; }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td:first-child code { white-space: nowrap; }
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-br); border-radius: 8px;
+    padding: .8rem 1rem; margin: 1rem 0; }
+  .callout strong { color: var(--fg); }
+  .pill { display: inline-block; font-size: .78rem; font-weight: 600; color: var(--accent2);
+    border: 1px solid var(--accent2); border-radius: 999px; padding: .05rem .55rem; }
+  footer { color: var(--muted); font-size: .88rem; margin-top: 3rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Viewer URL parameters &amp; transport</h1>
+  <p class="lede">Query parameters you can append to a e2eMoQ watch or broadcast URL, and how the
+  origin&nbsp;&rarr;&nbsp;edge transport hint (<code>xport</code>) works. Developer reference.</p>
+
+  <h2>Watch / broadcast selectors</h2>
+  <div class="wrap">
+  <table>
+    <thead><tr><th>Parameter</th><th>Example</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>stream</code></td><td><code>?stream=ab5ki</code></td>
+        <td>Broadcast as a given 5-char stream id (broadcaster path).</td></tr>
+      <tr><td><code>geo</code></td><td><code>?geo=47.60,-122.33</code></td>
+        <td>Testing override for the viewer/broadcaster location, forwarded to the broker as <code>hints.geo</code>
+        so geo-nearest routing can be exercised from anywhere (normally derived from <code>request.cf</code>). Works
+        on both the origin-placement and fleet-watch paths. <strong>Since 2026-07-19</strong>
+        this drives real cross-fleet playback: geo-steering a fleet-watch (Model&nbsp;A) viewer to a fleet that isn't the
+        broadcaster's origin makes that fleet <strong>cluster-pull the origin</strong> over <code>host:port</code> and play &mdash;
+        so cross-fleet edge serving (Mode&nbsp;B) is <strong>automatic</strong> under geo routing, chosen by the broker
+        per viewer with no override needed.</td></tr>
+      <tr><td><code>origin</code></td><td><code>?origin=host:port</code></td>
+        <td>Testing override on the fleet watch path: force the <code>host:port</code> origin the edge pulls from
+        (normally derived by the Worker).</td></tr>
+      <tr><td><code>xport</code></td><td><code>?xport=iroh</code></td>
+        <td>Selects the origin&nbsp;&rarr;&nbsp;edge transport. See below.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2><code>xport</code> — origin&nbsp;&rarr;&nbsp;edge transport hint</h2>
+  <p>On a cross-fleet (geo-routed edge) or enterprise watch URL, <code>xport</code> tells the
+  moqcdn CDN <em>how the edge should pull the stream from the origin</em>:</p>
+  <div class="wrap">
+  <table>
+    <thead><tr><th>Value</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>iroh</code></td><td>The edge pulls from the origin over <strong>iroh</strong>, which finds the
+        origin by its own relay-to-relay discovery — NAT-friendly, so the origin needs no public host:port. This
+        happens between boxes on the fleet; the browser is not involved.</td></tr>
+      <tr><td><em>(absent / any other value)</em></td><td>Default: the edge pulls over native
+        <strong>QUIC</strong> by <code>host:port</code>. The request is byte-identical to a URL with no
+        <code>xport</code> at all.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="callout"><strong>Gated-origin caveat (2026-07).</strong> Origins are now token-gated, and the edge's
+    pull token reaches the origin only over the <code>host:port</code> QUIC connect. So on the live fleet a cross-box
+    pull uses <code>host:port</code> even when <code>?xport=iroh</code> is requested &mdash; the iroh transport does not
+    yet carry the pull token to a gated origin. Iroh origin-pull stays the design target for NAT'd origins (the current
+    fleet is publicly reachable); the fix is deferred.</div>
+  <p>How the hint travels (it is forwarded verbatim, never interpreted client-side):</p>
+  <pre><code>Mode B (geo-routed cross-fleet edge):
+  browser URL ?xport=iroh
+    -&gt; GET /api/streams/&lt;id&gt;/route?geo=&hellip;&amp;xport=iroh          (player)
+    -&gt; Worker /route reads xport, forwards it to the broker with origin + pull
+    -&gt; broker hands the geo-nearest edge the origin + xport                (server-side)
+
+Mode C (enterprise, on-net edge):
+  browser URL ?xport=iroh
+    -&gt; GET https://&lt;relay&gt;/assign?broadcast=&hellip;&amp;xport=iroh        (browser preflight)</code></pre>
+
+  <div class="callout">
+    <strong>Two things people get wrong:</strong>
+    <ul style="margin:.4rem 0 0; padding-left:1.2rem;">
+      <li><strong>The <code>Connected: &lt;edge&gt;:&lt;port&gt;</code> / <code>Mode: WebTransport</code> line is the
+        <em>browser&nbsp;&harr;&nbsp;edge</em> hop, and it is <em>always</em> WebTransport</strong> — regardless of
+        <code>xport</code>. It is not a fallback indicator. <code>xport</code> only affects the separate
+        <em>origin&nbsp;&rarr;&nbsp;edge</em> hop.</li>
+      <li><strong><code>xport</code> is a non-secret transport hint.</strong> It changes no tokens and no auth.
+        Access is still gated by the per-broadcast token, and <code>xport</code> never affects media encryption
+        (every broadcast stays end-to-end encrypted with a content key no relay ever sees, so a stream is
+        watchable only through its share link).</li>
+    </ul>
+  </div>
+
+  <h2>"Origin link" stats line</h2>
+  <p>For a cross-cluster watch, the player confirms the <em>actual</em> origin&nbsp;&rarr;&nbsp;edge transport
+  by polling a public, read-only endpoint on the edge (~1.5&nbsp;s after connect, re-polling every 5&nbsp;s;
+  the line is hidden on <code>unknown</code> or any error):</p>
+  <pre><code>GET https://&lt;edge-host&gt;/edge_xport?broadcast=&lt;rawBroadcastId&gt;
+  (port 443, no auth, CORS *; the broadcast id is substring-matched)
+
+-&gt; { "xport": "iroh" | "quic" | "unknown", "origin": "&lt;host:port&gt;" }</code></pre>
+  <p>It renders one of:</p>
+  <div class="wrap">
+  <table>
+    <thead><tr><th><code>xport</code></th><th>Stats line shown</th></tr></thead>
+    <tbody>
+      <tr><td><code>iroh</code></td><td><code>Origin link: iroh / DHT</code></td></tr>
+      <tr><td><code>quic</code></td><td><code>Origin link: &lt;origin&gt; (QUIC)</code></td></tr>
+      <tr><td><code>unknown</code> / error</td><td><em>(line hidden)</em></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>See also</h2>
+  <p><a href="/security-architecture.pdf">Full architecture (PDF)</a> — infrastructure, routing &amp; the
+  three-hop transport model that <code>xport</code> plugs into.</p>
+
+  <footer>e2eMoQ · developer reference · the <code>xport</code> hint and <code>/edge_xport</code>
+  endpoint are provided by the moqcdn CDN.</footer>
+</main>
+</body>
+</html>

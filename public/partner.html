@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<title>e2eMoQ — Run a partner fleet</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #e2e2e2;
+    --card: #f7f7f7; --code-bg: #f0f0f0; --accent: #0a7d63; --accent2: #00b894;
+    --warn-bg: #fff8e6; --warn-br: #e8c76a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131313; --fg: #e8e8e8; --muted: #9a9a9a; --border: #2c2c2c;
+      --card: #1b1b1b; --code-bg: #202020; --accent: #22c5a0; --accent2: #2ee0b8;
+      --warn-bg: #241f11; --warn-br: #5a4a1e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem 5rem; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 820px; margin: 0 auto; }
+  h1 { font-size: 1.9rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.3rem; margin: 2.4rem 0 .6rem; padding-top: .6rem; border-top: 1px solid var(--border); }
+  .lede { color: var(--muted); font-size: 1.05rem; margin: 0 0 1rem; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em;
+    background: var(--code-bg); padding: .12em .4em; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: .9rem 1rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin: .55rem 0; }
+  ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+  ol.steps > li { counter-increment: step; position: relative; padding: 0 0 0 3rem; margin: 1.4rem 0; }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 0;
+    width: 2rem; height: 2rem; border-radius: 999px; background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .95rem;
+  }
+  ol.steps > li h3 { margin: .15rem 0 .3rem; font-size: 1.05rem; }
+  ol.steps > li p { margin: .3rem 0; }
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-br); border-radius: 8px;
+    padding: .8rem 1rem; margin: 1rem 0; }
+  .callout strong { color: var(--fg); }
+  .muted { color: var(--muted); font-size: .93rem; }
+  .pill { display: inline-block; font-size: .78rem; font-weight: 600; color: var(--accent2);
+    border: 1px solid var(--accent2); border-radius: 999px; padding: .05rem .55rem; }
+  footer { color: var(--muted); font-size: .88rem; margin-top: 3rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Run a partner fleet</h1>
+  <p class="lede">Spin up your own relay and join e2eMoQ's geo-brokered CDN. Your box becomes a
+  regional edge that serves nearby viewers &mdash; carrying media it can never read. Onboarding is
+  <strong>by request</strong>.</p>
+
+  <div class="callout"><strong>By request.</strong> Partner fleets are added on request. Contact
+  <a href="mailto:erik@vivoh.com">erik@vivoh.com</a> to be issued installer access and a customer
+  delegation, then follow the steps below.</div>
+
+  <h2>What you're joining</h2>
+  <p>e2eMoQ's CDN is <strong>brokered</strong>: a lightweight broker (<code>cdnadmin</code>, at
+  <a href="https://moqcdn.net/cdnadmin">moqcdn.net/cdnadmin</a>) holds the fleet registry and picks a box
+  per viewer. Once your fleet is <em>delegated</em>, <em>geo-located</em>, and <em>resynced</em>, the broker
+  ranks it by great-circle distance from each viewer and routes nearby traffic to it. Your box then either
+  <strong>serves as the origin</strong> for broadcasters near you, or <strong>cluster-pulls a remote origin</strong>
+  over <code>host:port</code> to serve viewers near you &mdash; automatically, no per-stream configuration.</p>
+  <p>All media stays <strong>relay-blind, end-to-end encrypted</strong>: as an edge you move ciphertext you
+  cannot decrypt, and access is enforced by a per-broadcast token the relay verifies with a
+  <strong>public</strong> key only (BYOK) &mdash; your box can verify tokens but never mint them. Running a
+  partner fleet grants you no ability to watch, forge, or tamper with the streams flowing through it.</p>
+  <p>The encryption is what <strong>confines a stream to its own app</strong>: the content key lives only in the
+  origin app's Worker and reaches only that app's authorized viewers, so the only people who can access a stream
+  are those watching from the same app that created it. Your edge simply moves ciphertext to those viewers &mdash;
+  it never holds the key, and neither does anyone on any other app or domain.</p>
+  <p>Your box is also <strong>scoped to only the customers you agree to host</strong>. The broker pushes a tenant
+  record (its name and public verify key) to your box <em>only</em> for customers on your allow-list, and each
+  provisioning bearer is <strong>host-scoped</strong> &mdash; bound to your hostname, so it is worthless on any other
+  box. A partner box therefore sees nothing about other customers or other fleets: no shared registry, no fleet-wide
+  credential, no customer list.</p>
+
+  <h2>Before you start</h2>
+  <ul>
+    <li>A server (VPS or bare metal) with a <strong>public IPv4</strong> and root/sudo.</li>
+    <li>A <strong>domain you control</strong>, so you can point a hostname at the box and it can obtain TLS.</li>
+    <li>The ability to open the relay's <strong>UDP QUIC ports</strong> (the <code>800X</code> range) in any
+      host or cloud firewall.</li>
+    <li>An installer invite + a customer delegation from the e2eMoQ operator (see the callout above).</li>
+  </ul>
+
+  <h2>Steps</h2>
+  <ol class="steps">
+    <li>
+      <h3>Spin up a server and map DNS</h3>
+      <p>Point <code>relay.yourdomain.com</code> at the box's public IP. Choose a hostname that names the
+      box's region or city &mdash; the broker can derive coordinates from it (e.g. <code>ams</code>,
+      <code>sjc</code>), or you set them explicitly in step&nbsp;6.</p>
+    </li>
+    <li>
+      <h3>Run the installer</h3>
+      <p>Installs the hermit-moq relay + the moqcdn autoscaler, opens the QUIC ports, and provisions TLS:</p>
+      <pre><code>curl -fsSL https://moqcdn.net/partners/install-brokered.sh | bash -s -- you@domain.com relay.domain.com moqcdn.net</code></pre>
+      <p class="muted">Pass <em>your</em> email, <em>your</em> relay hostname, and the <strong>broker domain</strong>
+      (<code>moqcdn.net</code>) the box will delegate to. When it finishes it prints an <strong>admin login</strong>
+      &mdash; the email you gave plus a generated password. Save them; they are shown once.</p>
+    </li>
+    <li>
+      <h3>Open your box's admin console</h3>
+      <p>Browse to <code>https://relay.yourdomain.com</code> and sign in with the email you passed to the
+      installer and the password it printed.</p>
+      <p class="muted">These are <strong>your</strong> credentials for <strong>your</strong> box &mdash; keep
+      them private. Never share or publish them; anyone who has them can control your fleet's delegation.</p>
+    </li>
+    <li>
+      <h3>Delegate the fleet to the broker</h3>
+      <p>In the box admin, <strong>delegate the fleet to <code>moqcdn.net</code></strong> and copy the
+      <strong>delegation token</strong> it generates.</p>
+    </li>
+    <li>
+      <h3>Register the fleet in cdnadmin</h3>
+      <p>Go to <a href="https://moqcdn.net/cdnadmin">moqcdn.net/cdnadmin</a> &rarr; <strong>Add fleet</strong>
+      (<code>/fleet</code>) and paste the delegation token from the previous step.</p>
+    </li>
+    <li>
+      <h3>Set the coordinates for geo-steering</h3>
+      <p>Add the box's <strong>latitude / longitude</strong> so the broker can geo-rank it. Without
+      coordinates the fleet falls into flat, distance-less ordering and is <strong>never picked as
+      &ldquo;nearest&rdquo;</strong> for any viewer &mdash; it would only ever receive spill-over.</p>
+    </li>
+    <li>
+      <h3>Re-push all customers</h3>
+      <p>cdnadmin &rarr; <strong>Customers</strong> (<code>/customers</code>) &rarr;
+      <strong>&ldquo;Re-push all customers.&rdquo;</strong> This writes each customer's provisioning credential
+      onto your newly delegated box so it can actually serve their streams.</p>
+      <p class="muted">Don't skip this &mdash; until it runs, your box rejects assignment requests with
+      <code>401</code> and the broker silently spills traffic to other fleets, so your fleet appears delegated
+      but never serves anything.</p>
+    </li>
+  </ol>
+
+  <h2>Verify it's serving</h2>
+  <p>Force a viewer to your fleet with the <code>?geo=</code> override (its own coordinates) against any live
+  broadcast and confirm it plays:</p>
+  <pre><code>https://e2emoq.com/&lt;stream-id&gt;?geo=&lt;your-lat&gt;,&lt;your-lon&gt;</code></pre>
+  <p>The broker should route the viewer to <code>relay.yourdomain.com:80xx</code> and the stream should reach
+  first frame &mdash; served directly if the broadcaster is on your box, or cluster-pulled from a remote origin
+  if not.</p>
+
+  <h2>How routing works once you're in <span class="pill">reference</span></h2>
+  <p>Your fleet participates in exactly the geo-nearest, cross-fleet pull path e2eMoQ runs across its own
+  regions. For the full model &mdash; the origin&nbsp;&rarr;&nbsp;edge transport, the pull-leg auth, and the
+  relay-blind encryption guarantee &mdash; see the
+  <a href="/security-architecture.pdf">architecture PDF</a> and the
+  <a href="/url-parameters">viewer URL parameters</a> reference.</p>
+
+  <footer>e2eMoQ &middot; partner onboarding &middot; the installer, <code>cdnadmin</code>, and fleet
+  delegation are provided by the moqcdn CDN. Partner fleets are added by request &mdash;
+  <a href="mailto:erik@vivoh.com">erik@vivoh.com</a>.</footer>
+</main>
+</body>
+</html>

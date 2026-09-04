@@ -1,0 +1,19 @@
+-- Proof-of-link for /route.
+--
+-- Before this, the Worker minted a viewer token to anyone who could name a live stream id.
+-- Ids are [a-z0-9]{5} — about 60 million values, sweepable by anyone who cares — so a stranger
+-- could enumerate live broadcasts and pull their ciphertext. Content was never at risk (the
+-- key lives in a fragment we never see), but it made this account an open tap for our own CDN
+-- egress and disclosed who was broadcasting and when.
+--
+-- The publisher derives this tag from the link secret at go-live and sends it here; viewers
+-- derive the identical value from the fragment they hold. Everyone with the link computes the
+-- same tag, which is the correct shape for a capability — it authorises, it does not identify.
+--
+-- Storing it costs us nothing in confidentiality: it comes from a different HKDF info AND a
+-- different salt than the content key, so it is cryptographically independent of it. Holding
+-- the tag gives this Worker no more ability to decrypt than it had before, which was none.
+--
+-- Per BROADCAST, not per stream id: the link secret is fresh for every broadcast, so a tag
+-- pinned to a reusable stream id would be wrong the moment that name went live again.
+ALTER TABLE broadcast_events ADD COLUMN route_tag TEXT;
