@@ -206,17 +206,9 @@ makes directly, which is the network floor described in §6.</p>
 service, no public record, and nothing published to any outside network that would reveal that a
 stream exists or where it is carried. <strong>Nothing about an e2eMoQ broadcast appears in any
 public directory, DHT, or index.</strong></p>
-<p>This is worth stating explicitly because an earlier generation of this codebase, upstream and
-before e2eMoQ was forked from it, did the opposite: a broadcaster minted a keypair, used
-<code>base32(publicKey)</code> as the stream name, and self-published a signed pkarr record to the
-public BitTorrent Mainline DHT so any client could resolve it. That record was world-readable by
-design, and the media on that path was deliberately <em>not</em> end-to-end encrypted — the whole
-point was that a stranger could subscribe without a key. Both properties are the inverse of what
-this system promises, so the code asserted two contradictory privacy models at once.</p>
-<p>It was removed upstream on 2026-08-15. <strong>No code for it has ever existed in this
-repository</strong>, and the single remaining path is: one stream handle, always encrypted,
-decodable only by someone holding the share link — plus the passcode, if the broadcaster armed
-Protect.</p>
+<p>The consequence worth drawing out: a stream id is not a secret, and it is not meant to be.
+Guessing one, or sweeping the whole five-character space, tells an attacker only whether something
+is live. It yields no media, because the key was never on this side of the wire.</p>
 
 <h2>8. Teardown</h2>
 <p>On stop or tab close, the browser calls <code>POST /api/stats/broadcast/:id/end</code>. The Worker marks the broadcast ended in D1. Nothing has to be reclaimed: no relay was ever provisioned, and the tokens simply expire. Content keys are per-session; a restarted broadcast receives a fresh key, so previously distributed keys cannot decrypt a new session.</p>

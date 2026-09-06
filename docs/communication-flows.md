@@ -12,11 +12,10 @@ privacy annotation on every hop, so we can see exactly **how a user could be ide
 targeted, or revealed**, and where they're protected. The bar for e2eMoQ is very high, so
 this is written to expose leaks, not to reassure.
 
-> **Headline:** the tokens, the media path and the control plane are clean. The geolocation
-> surface this document was originally written about **no longer exists** — every `geo_*`
-> column was dropped and its data destroyed, and no endpoint stores or returns a location.
-> What remains is the network floor: the CDN and Cloudflare necessarily see the IP a
-> connection arrives from, which is a VPN/Tor question rather than a software one.
+> **Headline:** the tokens, the media path and the control plane are clean. No endpoint
+> stores or returns a location, an IP, an IP hash, a cookie or a fingerprint. What remains
+> is the network floor — the CDN and Cloudflare necessarily see the address a connection
+> arrives from — and that is a VPN/Tor question rather than a software one.
 
 ---
 
@@ -58,12 +57,9 @@ flowchart TB
 3. **Media plane** — browser ↔ the moq.pro CDN (WebTransport), authorised by a short-lived
    token this Worker signs. The relay sees the **browser IP** and ciphertext, and nothing else.
 
-> **Resolved 2026-08-15 — the discovery plane is gone.** This document previously carried a
-> fifth plane: browser ↔ public pkarr relays, which exposed the browser IP and the nodeId being
-> published or looked up to third-party infrastructure outside Cloudflare. The DHT path was
-> removed upstream on 2026-08-15, before e2eMoQ was forked — no code for it has ever existed
-> in this repository, so **no browser contacts a pkarr relay and no record about
-> any broadcast is published anywhere public.** The two ⚠️ findings below are closed.
+> **There is no discovery plane.** No directory, no lookup service, no DHT, no public index.
+> A viewer reaches a broadcast because someone sent them the link, and for no other reason.
+> The browser contacts nothing outside Cloudflare and the moq.pro CDN.
 
 ---
 
@@ -101,22 +97,9 @@ no account, no request from us to them at all.
 | Flow | Connect URL (file:line) | Privacy |
 |---|---|---|
 | Publisher connect | `https://<relay>/?jwt=` (`main.ts:1247`) | **Relay/box sees broadcaster IP.** Token = stream id scope, no identity. |
-| Viewer connect | `https://<relay>/?jwt=` (`main.ts:2177`) | **Edge box sees viewer IP.** Subscribe token, stream id scope only. |
-| Enterprise (Mode C) | `/assign` + connect (`main.ts:1582,1598`) | **Private relay sees viewer IP.** Watch + browser-couriered pull token. |
-| Probes | `:8888/fingerprint`, `/edge_xport` (`main.ts:432,577`) | Direct browser→box: box sees browser IP; no token. |
+| Viewer connect | `cdn.moq.pro` + subscribe token | **The CDN sees the viewer IP.** Token is subscribe-only and scoped to one stream id. |
 
-### Group E — Browser ↔ discovery — **REMOVED 2026-08-15**
-
-This group no longer exists. It covered the node-id flow: `POST /api/publish`, `POST /api/edge`,
-and the `Pkarr.relayPut` / `relayGet` calls in `dht.ts`. Every one of those code paths has been
-deleted — `dht.ts` and `nodeid.ts` are gone from the tree, the two Worker routes are gone, and
-`pkarr` is no longer a dependency. **The browser now contacts no third party outside Cloudflare
-and the moq.pro CDN.**
-
-Closed with it: the un-encrypted node-id media path (there is no longer any path that publishes
-plaintext), and the world-readable `nodeId → origin EndpointId` record.
-
-### Group F — Admin (not a normal-user flow)
+### Group E — Admin (not a normal-user flow)
 
 | Flow | Endpoint (file:line) | Privacy |
 |---|---|---|
@@ -157,25 +140,26 @@ Only these exist in the whole system:
 
 1. **IP** — ambient on every browser→Worker and browser→relay call, and visible to Cloudflare
    and the CDN. Never stored by us. The real deanonymizer, and a VPN/Tor question.
-2. ~~**Precise geo (lat/lon)**~~ — **gone.** Every `geo_*` column was dropped and its data
-   destroyed; nothing captures or returns a location.
-3. **Stream id** — pseudonymous; identifies a *stream*, not a person (unless linked
+2. **Stream id** — pseudonymous; identifies a *stream*, not a person (unless linked
    elsewhere).
-4. **Chat display name** — self-chosen and sealed under the chat key; a self-doxxing vector only
+3. **Chat display name** — self-chosen and sealed under the chat key; a self-doxxing vector only
    in the sense that a user may type their own name into it.
-5. **Email addresses** — none. There are no accounts anywhere in this product.
-6. **Tokens carry none of the above** — clean.
+4. **Tokens carry none of the above** — clean.
+
+There is no location, no IP hash, no cookie, no fingerprint and no account anywhere in the
+system, so they do not appear on this list.
 
 ---
 
 ## 6. How a user gets revealed — ranked exposures
 
-**~~HIGH — persisted precise geolocation.~~ RESOLVED.**
-Every `geo_*` column was dropped and its data destroyed, and the viewers endpoint is now gated on
-a tag derived from the share link rather than being public. What is left in its place is a much
-smaller finding: **audience size is visible to everyone holding the link**, because every viewer
-necessarily has the secret that authorises the query. Not public — a stranger gets the same
-"offline" answer as for a stream that does not exist — but not broadcaster-only either.
+**MEDIUM — audience size is visible to every link holder, not just the broadcaster.**
+The viewers endpoint is authorised by a tag derived from the share-link secret — and every
+viewer necessarily holds that secret, because it is what decrypts the video. So anyone the link
+reached, including anyone it was forwarded to, can ask how many people are watching and for how
+long, without connecting. It is not public: a stranger gets the same "offline" answer as for a
+stream that does not exist. But it is a presence signal, and it outlives the broadcast it was
+shared for.
 
 **MEDIUM — raw browser IP exposed to the CDN.**
 The browser connects to moq.pro directly, so the relay sees the viewer's or broadcaster's real IP
@@ -189,10 +173,6 @@ derived from the share link, so Cloudflare relays ciphertext. What remains is re
 last 50 messages persist in the Durable Object with no expiry and no end-of-broadcast deletion.
 They are ciphertext, so the exposure is bounded by the link rather than by the server, but a TTL
 is still the right behaviour. There is no account and no real name to auto-fill.
-
-**~~MEDIUM — node-id media path is not encrypted.~~ RESOLVED 2026-08-15.**
-The node-id path was removed rather than encrypted. There is now exactly one media path and it
-is always end-to-end encrypted, so "no plaintext" holds everywhere without exception.
 
 **LOW / operational — admin surface.**
 Admin endpoints are guarded by the `ADMIN_PASSWORD` secret (`wrangler secret put`); when it is
@@ -215,31 +195,20 @@ accounts and no email addresses for any endpoint to return.
 
 ## 8. Recommendations (ranked to the high-privacy bar)
 
-1. ~~**Stop persisting precise geo.**~~ **Done, and further than proposed** — rather than
-   coarsening, every geo column was dropped and the data destroyed. `watch_events` still exists
-   but holds no identifier of any kind: which stream, when it began, when it ended.
-2. ~~**Lock down the geo-exposing stats endpoints.**~~ **Done** — there is no geo to expose, and
-   the per-stream viewers endpoint is gated on the link-derived tag rather than being public.
-3. **Audience size is visible to every link holder**, not only the broadcaster. Rate-limit the
-   endpoint, and say so plainly on `/trust` rather than leaving people to discover it.
-4. **Chat:** add a TTL / delete DO storage on broadcast end. ~~Move to an E2E chat~~ **done** —
-   messages and display names are sealed in the browser under a link-derived key.
-5. ~~**Encrypt or retire the node-id media path** so "no plaintext" holds everywhere.~~
-   **Done 2026-08-15 — retired.**
-6. ~~**Replace the hardcoded admin bearer with a Worker secret.**~~ **Done** — `ADMIN_PASSWORD`
-   is a secret, and an unset value disables the admin surface rather than defaulting open.
-7. ~~**pkarr IP exposure** (node-id flow): self-host a pkarr relay or proxy the put/get through
-   the Worker.~~ **Done 2026-08-15** — resolved by removing the flow, so neither mitigation is
-   needed. Routing never depended on it; moq.pro places viewers on its own nearest relay.
-8. **CDN IP exposure** is the network floor — the user's own tool (Tor/VPN); can't be removed
-   in software. Document it honestly.
+1. **Rate-limit the viewers endpoint**, and say plainly on `/trust` that audience size is
+   visible to everyone holding the link — rather than leaving people to discover it.
+2. **Chat retention.** Add a TTL, or delete the Durable Object's storage when the broadcast
+   ends. The stored messages are ciphertext, so this is housekeeping rather than a leak — but
+   "nothing is kept" is not a claim that can be made while fifty of them sit there.
+3. **CDN IP exposure** is the network floor — the user's own tool (Tor/VPN); it cannot be
+   removed in software. Document it honestly rather than implying otherwise.
 
 ---
 
 ## 9. Summary — per flow
 
-Legend — IP: peer sees browser IP directly **(Y)** / only via Cloudflare **(cf)** / not at all
-**(N)**. Geo: **precise** = lat/lon, **coarse** = country/colo, **N** = none.
+Legend — IP: peer sees the browser IP directly **(Y)** / only via Cloudflare **(cf)** / not at
+all **(N)**. Every cell in the Geo column is **N**; the column is kept to show that.
 
 | # | Flow | IP | Geo | Token | Account id | Persists? |
 |---|---|---|---|---|---|---|
@@ -251,6 +220,5 @@ Legend — IP: peer sees browser IP directly **(Y)** / only via Cloudflare **(cf
 | B3 | live / per-stream viewers | cf | N | **link-derived tag** | anon | reads D1 (counts only) |
 | C | Worker ↔ moq.pro | — | — | — | — | *no such call; the browser carries the token* |
 | D1-4 | browser→moq.pro WT connect | **Y (CDN)** | N | **Y** (stream-scoped) | N | N |
-| ~~E1-4~~ | ~~`/api/publish`, `/api/edge`, DHT put/get~~ | — | — | — | — | **removed 2026-08-15** |
 | Chat | `/api/streams/:id/chat` WS | cf | N | N | display name | **last 50 in DO, no TTL** |
-| Admin | `/api/admin/*` | cf | N | **static admin bearer** | **emails** | — |
+| Admin | `/api/admin/*` | cf | N | `ADMIN_PASSWORD` secret | N | — |
