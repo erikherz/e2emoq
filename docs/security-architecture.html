@@ -93,51 +93,47 @@
 <h2>1. The components</h2>
 <ul>
   <li><strong>Browser</strong> — runs the MoQ publisher (broadcaster) or watcher (viewer), built on the open-source MoQplay engine. This is the <em>only</em> place plaintext media ever exists; frames are encrypted before they leave the tab and decrypted only after they arrive in another tab. The browser also mints each stream's cryptographic identity (§7.1).</li>
-  <li><strong><code>e2emoq</code> Worker</strong> (Cloudflare) — the control brain. It authenticates to the relay fleet, mints per-session tokens, and holds the D1 database mapping each broadcast to its relay. It never touches media bytes and never holds a media key.</li>
-  <li><strong>Broker / control plane</strong> — <code>moqcdn.net/cdnadmin</code>, the CDN broker (the <code>cdnadmin</code> console + <code>POST /cdn/assign</code>). The Worker asks it to place a relay for a broadcast (by name); the broker geo-selects a box across the four regional fleets, boots or reuses a micro-relay, and is fail-closed: a missing or wrong customer token yields <code>401</code>. The Worker never contacts a relay box directly and never holds a box bearer — the broker owns box topology and holds the per-box provisioning bearers itself.</li>
-  <li><strong>Relays</strong> — <code>{ams,was,tok}.moqcdn.net</code> / <code>sca.gpcmoq.com</code> <code>:800X</code>, the data plane across four regions. Hermit-OS unikernels under Linux&nbsp;KVM, each serving one broadcast on a dedicated UDP port. Browsers reach them over WebTransport/QUIC; a relay can also pull from another fleet's origin relay over iroh or by <code>host:port</code> QUIC (§7.3). On the relay-blind flow they only ever handle <strong>ciphertext</strong>.</li>
+  <li><strong><code>e2emoq</code> Worker</strong> (Cloudflare) — the control brain. It mints per-session CDN tokens and holds the D1 database recording each broadcast. It never touches media bytes and never holds a media key.</li>
+  <li><strong>CDN</strong> — <code>cdn.moq.pro</code>, the data plane. Browsers reach it over WebTransport/QUIC and it fans one publisher out to many viewers. It places viewers on its own nearest relay; e2eMoQ does not choose or operate relays. It only ever handles <strong>ciphertext</strong>.</li>
 </ul>
-<div class="callout"><strong>How the app gets a relay.</strong> Provisioning — getting an origin box, and an edge that pulls from it — runs one way, content-blind at the fleet: the Worker calls the <strong>moqcdn broker</strong> (<code>POST moqcdn.net/cdn/assign</code>) with a <code>cdn_</code> customer token, and the broker geo-places a box across the four regional fleets. The Worker never holds a box bearer and never talks to a relay directly — the broker owns box selection and authenticates to each box itself. (An earlier build also supported a <em>direct</em> mode, where the app called a fleet box's <code>/assign</code> with that box's <code>tmq_</code> bearer; the deployed system no longer uses it — brokered is the only path.) There is no separate discovery step: the Worker knows where it placed the origin, and hands it to the broker when a viewer arrives (§7.2).</div>
+<div class="callout"><strong>How the app gets a relay.</strong> It does not ask for one. <strong>There is no provisioning step and no server-to-server call anywhere in this system.</strong> The relay is always <code>cdn.moq.pro</code>; the broadcast path is <code>&lt;root&gt;/&lt;id&gt;.hang</code> under the account root. The Worker signs a short-lived token scoped to that one path and hands it to the browser, which presents it to the CDN itself. Nothing about the viewer — no IP, no location, no account — is ever sent from us to the CDN, because we never call it.</div>
 
 <h2>2. Two distinct credential layers</h2>
 <p>The most important idea in the system: there are two token layers doing unrelated jobs. Confusing them is the single biggest source of error.</p>
 
-<h3>Layer 1 — the broker customer token (tenant identity)</h3>
-<p>The secret <code>CDN_API_TOKEN</code> — a <code>cdn_</code> customer token issued by the moqcdn <code>cdnadmin</code> — is e2eMoQ's <em>customer identity</em> with the broker. The Worker sends it as <code>Authorization: Bearer &hellip;</code> to <code>moqcdn.net/cdn/assign</code>. It is long-lived, lives only in the Worker's secret store, and <strong>never</strong> reaches a browser or a relay. It proves <em>e2eMoQ-the-tenant</em> to the broker, nothing finer-grained. The broker in turn holds the per-box provisioning bearers (<code>tmq_</code>, host-scoped) and authenticates to each relay itself — the Worker never sees them. <span class="small">(The token is broker-specific: a <code>cdn_</code> token is an HMAC under that broker's master key, so a token minted by one broker is meaningless to another.)</span></p>
+<h3>Layer 1 — the publish code (admission)</h3>
+<p>A stateless credential that answers one question: <em>may this person broadcast at all?</em> It is the same value for every broadcaster, identifies nobody, and is verified against the <code>PUBLISH_SECRET</code> in the Worker's secret store. It is minted automatically on first go-live, so most broadcasters never see it. It says nothing about <em>which</em> broadcast — that is the job of the signed claim beside it (§7.1) — and it never reaches the CDN.</p>
 
 <h3>Layer 2 — per-broadcast MoQ tokens (session capability)</h3>
-<p>Short-lived EdDSA (Ed25519) JWTs that authorize <em>one browser</em> to do <em>one thing</em> on <em>one relay</em> for a bounded time. Minted fresh per session by the Worker, couriered to the browser, and presented to the relay in the <code>?jwt=</code> connection parameter. Their <code>put</code>/<code>get</code> claims are scoped to exactly one broadcast name (e.g. <code>moqplay.com/&lt;id&gt;.hang</code>), and they are signed with <strong>e2eMoQ's own private key</strong> (BYOK, kid <code>e2emoq-533d711d</code>). The relay validates the signature against e2eMoQ's <strong>public <code>verify_jwk</code></strong>, which the broker has mapped onto the box — the box holds only the public half, so it can verify but can <em>never</em> mint.</p>
+<p>Short-lived EdDSA (Ed25519) JWTs that authorize <em>one browser</em> to do <em>one thing</em> on <em>one relay</em> for a bounded time. Minted fresh per session by the Worker and couriered to the browser, which presents them to <code>cdn.moq.pro</code>. Their <code>put</code>/<code>get</code> claims are scoped to exactly one broadcast name (<code>&lt;id&gt;.hang</code> under the account root), and they are signed with <strong>e2eMoQ's own Ed25519 private key</strong> (BYOK). moq.pro holds only the <strong>public half</strong>, registered once, so it can verify our tokens and can <em>never</em> mint one.</p>
 
-<div class="callout"><strong>Key separation.</strong> The customer token proves the <em>company</em> to the <em>broker</em>. The MoQ token proves <em>one browser</em> to <em>one relay</em>, signed by e2eMoQ and verified by the box with a public key only. Neither token can decrypt media — that is a third, independent secret (§5).</div>
+<div class="callout"><strong>Key separation.</strong> The publish code proves <em>a person may broadcast</em> to <em>us</em>. The MoQ token proves <em>one browser</em> may do <em>one thing</em> to <em>the CDN</em>, signed by e2eMoQ and verified with a public key only. Neither token can decrypt media — that is a third, independent secret we never hold (§5).</div>
 
 <h2 class="avoid-break">3. Broadcast flow — going live</h2>
-<pre class="avoid-break">browser                      Worker (e2emoq)      moqcdn broker        relay
-  |  mint 5-char stream id      |                            |                    |
-  |  POST /api/stats/broadcast  |                            |                    |
-  | --------------------------> |  POST /cdn/assign          |                    |
-  |                             |    { broadcast:            |                    |
-  |                             |      moqplay.com/&lt;id&gt;.hang }|                    |
-  |                             |  Authorization: Bearer     |                    |
-  |                             |    &lt;cdn_ customer token&gt;   |                    |
-  |                             | -------------------------> |  geo-place a box   |
-  |                             |  &lt;--------- { relay } ----- |                    |
-  |                             |                                                 |
-  |                             |  mintEd25519Token(privKey, {                    |
-  |                             |    put: [moqplay.com/&lt;id&gt;.hang],                 |
-  |                             |    get: [moqplay.com/&lt;id&gt;.hang],                 |
-  |                             |    exp }, kid=e2emoq-533d711d) -> jwt        |
-  |  &lt;-- { relay, jwt } -------- |  (no content key: the Worker has none)          |
-  |                                                                               |
-  |  derive media key locally:                                                    |
-  |    HKDF(link secret from #k=, info="e2emoq-content-key-v1")               |
-  |                                                                               |
-  |  connect wss://&lt;relay&gt;/?jwt=&lt;jwt&gt;,  publish AES-GCM-encrypted frames --------> |</pre>
+<pre class="avoid-break">browser                        Worker (e2emoq)              cdn.moq.pro
+  |  mint 5-char stream id        |                              |
+  |  POST /api/stats/broadcast    |                              |
+  |    + publish code             |                              |
+  |    + Ed25519 claim over id    |                              |
+  | ----------------------------> |                              |
+  |                               |  mintMoqProTokenEd25519(     |
+  |                               |    MOQ_PRO_JWK, {            |
+  |                               |      root,                   |
+  |                               |      put: ["&lt;id&gt;.hang"],     |
+  |                               |      get: ["&lt;id&gt;.hang"],     |
+  |                               |      exp }) -> jwt           |
+  |  &lt;-- { relay, path, jwt } --- |  (no content key: the Worker has none)
+  |                               |  (no call to the CDN: none is needed)
+  |                                                              |
+  |  derive media key locally:                                   |
+  |    HKDF(link secret from #k=, info="e2emoq-content-key-v1")   |
+  |                                                              |
+  |  connect cdn.moq.pro, publish AES-GCM-encrypted frames -----> |</pre>
 <ol>
   <li>The browser mints a 5-char stream id (§7.1) and uses it as the broadcast name, then calls the Worker's <code>POST /api/stats/broadcast</code>, presenting a publish code and a signed claim over that id.</li>
-  <li>The Worker calls the broker <code>POST moqcdn.net/cdn/assign { broadcast: moqplay.com/&lt;id&gt;.hang }</code> with the <code>cdn_</code> customer token. The broker geo-places a relay across the four regional fleets and returns <code>{ relay }</code> — a <code>host:port</code>. The Worker never sees a box bearer or a per-stream key.</li>
-  <li>The Worker mints a JWT (<code>mintEd25519Token</code>) carrying <code>put</code> <em>and</em> <code>get</code> scoped to the single broadcast name, plus an expiry, signed with e2eMoQ's own Ed25519 private key (kid <code>e2emoq-533d711d</code>).</li>
-  <li>The browser generates a <strong>link secret</strong> and a <strong>passcode</strong>, and derives the 256-bit AES-GCM media key from both with HKDF-SHA256 (<code>info = "e2emoq-content-key-v1"</code>). The secret lives in the share link's <code>#</code> fragment, which browsers never transmit; the passcode is never in the link at all. So <em>no content key is created by, sent to, or stored on the server</em>, and neither is either input to it (§5).</li>
-  <li>The browser connects to <code>wss://&lt;relay&gt;/?jwt=&lt;jwt&gt;</code>. The relay validates the JWT against e2eMoQ's public <code>verify_jwk</code> (mapped onto the box by the broker); the <code>put</code> scope authorizes publishing that name. Frames are AES-GCM encrypted <em>in the browser</em> before transmission.</li>
+  <li>The Worker mints a JWT (<code>mintMoqProTokenEd25519</code>) carrying <code>put</code> <em>and</em> <code>get</code> scoped to the single broadcast name, plus an expiry, signed with e2eMoQ's own Ed25519 private key. There is no call to the CDN at this or any other step.</li>
+  <li>The browser generates a <strong>link secret</strong> — and, if the broadcaster switched on Protect, a <strong>passcode</strong> as well — and derives the 256-bit AES-GCM media key with HKDF-SHA256 (<code>info = "e2emoq-content-key-v1"</code>). The secret lives in the share link's <code>#</code> fragment, which browsers never transmit; the passcode is never in the link at all. So <em>no content key is created by, sent to, or stored on the server</em>, and neither is either input to it (§5).</li>
+  <li>The browser connects to <code>cdn.moq.pro</code> presenting the JWT. The CDN validates it against e2eMoQ's registered public key; the <code>put</code> scope authorizes publishing that one name. Frames are AES-GCM encrypted <em>in the browser</em> before transmission.</li>
 </ol>
 
 <h2 class="avoid-break">4. Playback flow — joining a stream</h2>
@@ -149,7 +145,7 @@
           connect wss://&lt;relay&gt;/?jwt=&lt;viewer jwt&gt;,  pull ciphertext, decrypt in browser</pre>
 <ul>
   <li>The viewer token is <code>put: []</code>, <code>get: [&lt;name&gt;]</code> — <strong>subscribe-only</strong>. It cannot publish, so a viewer can never hijack the broadcast name.</li>
-  <li>The viewer is <strong>geo-routed</strong> to its nearest regional fleet. When that fleet is the origin's own box the broker serves it <strong>directly</strong> (co-location, the fast path); otherwise the broker hands that fleet the origin's <code>host:port</code> plus a subscribe-scoped pull token and it <strong>cluster-pulls the origin</strong> over QUIC. Model&nbsp;A media therefore spans regions — co-location is an optimization, not a requirement (live and proven 2026-07-19; §7.2).</li>
+  <li>The viewer is placed on a nearby relay <strong>by moq.pro</strong>, using its own global network. e2eMoQ takes no part in that decision and sends the CDN nothing about the viewer.</li>
   <li><code>content_key</code> is always <code>null</code> on this response. Confidentiality is not enforced by the Worker withholding anything — it is enforced by the Worker never having the key. A viewer without the <code>#</code> fragment connects, pulls ciphertext, and decodes nothing.</li>
 </ul>
 
@@ -169,14 +165,14 @@
 <h2 class="avoid-break">6. Trust boundaries — what each party can see</h2>
 <table class="avoid-break">
   <thead>
-    <tr><th>Party</th><th>Plaintext media</th><th>Content key</th><th>Fleet bearer</th><th>Can publish a name?</th></tr>
+    <tr><th>Party</th><th>Plaintext media</th><th>Content key</th><th>CDN token</th><th>Can publish a name?</th></tr>
   </thead>
   <tbody>
     <tr><td>Broadcaster browser</td><td class="yes">Yes (origin)</td><td class="yes">Yes (derives it)</td><td class="no">No</td><td class="yes">Yes (its own)</td></tr>
     <tr><td>Viewer browser (holds link <em>and</em> passcode)</td><td class="yes">Yes (after decrypt)</td><td class="yes">Yes (derives it)</td><td class="no">No</td><td class="no">No (get-only)</td></tr>
     <tr><td>Holder of the link only</td><td class="no">No (ciphertext only)</td><td class="no">No — passcode missing</td><td class="no">No</td><td class="no">No</td></tr>
     <tr><td><code>e2emoq</code> Worker</td><td class="no">No</td><td class="no">No — never receives it</td><td class="yes">Yes</td><td>n/a (mints tokens)</td></tr>
-    <tr><td>Relay / fleet</td><td class="no">No (ciphertext only)</td><td class="no">No</td><td class="no">No</td><td>Enforces token scope</td></tr>
+    <tr><td>moq.pro CDN</td><td class="no">No (ciphertext only)</td><td class="no">No</td><td class="no">No</td><td>Enforces token scope</td></tr>
     <tr><td>Network eavesdropper</td><td class="no">No (TLS + AES-GCM)</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
   </tbody>
 </table>
@@ -187,39 +183,47 @@
 <h3>7.1 How a stream is named — and why the name is not the secret</h3>
 <p>A broadcast's handle is a <strong>5-character stream id</strong> (<code>[a-z0-9]{5}</code>), minted in the browser and collision-checked against the Worker. It is the MoQ broadcast name and the path in the share link. That is <em>all</em> it is: the id carries no authority in either direction.</p>
 <ul>
-  <li><strong>It does not authorize watching.</strong> The capability is the link secret in the fragment after <code>#</code>, which browsers never transmit, <em>together with</em> the passcode, which is never in the link at all (§5). Knowing a stream id — even guessing one — yields nothing to decrypt, and neither does holding the whole link without the passcode.</li>
+  <li><strong>It does not authorize watching.</strong> The capability is the link secret in the fragment after <code>#</code>, which browsers never transmit — plus the passcode, if the broadcaster armed Protect, which is never in the link at all (§5). Knowing a stream id, even guessing one, yields nothing to decrypt.</li>
   <li><strong>It does not authorize publishing.</strong> Going live needs a publish code (admission) <em>and</em> a signed claim over the id. The browser mints a fresh, non-extractable Ed25519 keypair per broadcast and signs <code>e2emoq-claim-v1|&lt;id&gt;|&lt;challenge&gt;</code>; the Worker records the public half against the live row and refuses a second claimant. The keypair is <strong>fresh every broadcast on purpose</strong> — a reused key would make one broadcaster's streams linkable to each other by anyone who saw it.</li>
 </ul>
-<p>Keep this identity separate from the <strong>origin relay's iroh EndpointId</strong>, which is a 64-hex transport address derived from the relay's <code>HERMIT_IROH_SECRET</code>, chosen by the relay at boot, and used only for relay&rarr;relay dialling (§7.3). It never names a stream and never appears in a share link.</p>
 
-<h3>7.2 Routing model A — broker by name</h3>
-<p>This is what e2eMoQ runs in production. The name is resolved to a relay by the TinyMoQ autoscaler — not by the id itself:</p>
-<pre>Worker --GET https://ams.moqcdn.net/assign?broadcast=moqplay.com/&lt;id&gt;.hang--> autoscaler
-        Authorization: Bearer &lt;tenant token&gt;
-autoscaler -->  { relay: "ams.moqcdn.net:800X", key, byok:false }
-                (boots or reuses a micro-relay for this broadcast on UDP 800X)</pre>
-<p>The address handed back is a <code>host:port</code>. Viewers do not run discovery themselves: they call the Worker's <code>/route</code>, which looks up the broadcast's <strong>origin</strong> relay in D1 and hands the broker that origin plus a subscribe-scoped <strong>pull token</strong>. The broker geo-routes the viewer to its nearest healthy fleet: if that fleet <em>is</em> the origin box it serves <strong>direct</strong> (co-location, the fast path); otherwise that fleet <strong>cluster-pulls the origin</strong> over <code>host:port</code> QUIC using the pull token. Relays no longer have to be islands — a Model&nbsp;A viewer can be served from a fleet in a different region than the origin, the media pulled cross-fleet (live 2026-07-19). The edge authenticates its pull by presenting the viewer's own subscribe-scoped token over the <code>host:port</code> cluster-connect — the relay authorizes by scope alone, with no cluster flag and no anonymous sentinel.</p>
-<p class="small"><strong>Viewer steering.</strong> <code>/route</code> places a viewer three ways: <strong>Mode&nbsp;A (origin)</strong> — served directly on the origin's box when the viewer is nearest it; <strong>Mode&nbsp;B (cross-fleet edge)</strong> — the viewer's geo-nearest fleet pulls from the origin, authorized by a <em>subscribe-scoped</em> pull token (the same scope as the viewer token, with no cluster flag — the relay authorizes the pull by scope alone); <strong>Mode&nbsp;C (enterprise on-net)</strong> — a private relay on the viewer's own network (ASN-gated), so media never traverses a public server. Under the brokered production path, Modes&nbsp;A and&nbsp;B are the broker's <strong>automatic</strong> choice per viewer geo — no override needed — and Mode&nbsp;B is <strong>live and proven</strong> (2026-07-19: a viewer geo-forced to Amsterdam was served by the ams fleet cluster-pulling a Washington&nbsp;DC origin over <code>host:port</code>). The broker owns co-location detection by hostname, so it never hair-pins. (This was carried on the <code>/cdn/assign</code> contract all along, but the brokered <code>/route</code> previously sent only <code>{broadcast}</code> — dropping origin and pull — so auto-geo Mode&nbsp;B did not actually pull until the Worker was fixed to forward them.) In every mode the content key is delivered by the same rule (§5) and the relay-blind property holds.</p>
+<h3>7.2 Routing — moq.pro places the viewer</h3>
+<p>There is no routing model to choose and no autoscaler to ask. The relay is always
+<code>cdn.moq.pro</code> and the broadcast path is <code>&lt;root&gt;/&lt;id&gt;.hang</code>, so the
+Worker can name the destination without looking anything up:</p>
+<pre>publish:    { root, put: ["&lt;id&gt;.hang"], get: ["&lt;id&gt;.hang"], exp }
+subscribe:  { root, put: [],              get: ["&lt;id&gt;.hang"], exp }
+                    signed Ed25519 with MOQ_PRO_JWK; moq.pro holds only the public half</pre>
+<p>A viewer calls the Worker's <code>/route</code>, which authorises them by a tag derived from
+the share-link secret and returns a subscribe-only token. The browser presents it to
+<code>cdn.moq.pro</code>, and <strong>moq.pro selects the nearest relay itself</strong> across its
+own network. e2eMoQ neither knows nor influences which one, and — because the Worker never calls
+the CDN — the CDN learns nothing about a viewer from us. It sees only the connection the browser
+makes directly, which is the network floor described in §6.</p>
 
-<h3>7.3 The relay fleet</h3>
-<p>The data plane is a fleet of <strong>micro-relays</strong>. The autoscaler boots each on demand as a <strong>Hermit-OS unikernel</strong> — a single-address-space Rust image running under <strong>Linux&nbsp;KVM</strong> — listening on a dedicated UDP port. Each relay is per-broadcast keyed and short-lived; idle relays are reaped and their <code>/release</code>d slots recycled. The browser&harr;relay hop is always WebTransport/QUIC to a <code>host:port</code>. For cross-fleet federation, a relay also carries an <strong>iroh endpoint</strong> of its own (derived from its <code>HERMIT_IROH_SECRET</code>): an edge relay dials the origin relay by that <strong>EndpointId</strong> over iroh, using iroh's own relay-to-relay discovery — NAT-friendly, so an origin needs no public <code>host:port</code>. This is a hop between two boxes on the fleet: the browser is never party to it, and it publishes nothing about the broadcast. (Where both origin and edge have routable addresses, native <code>moq-relay</code> cluster-connect by <code>host:port</code> is still available; the <code>?xport=iroh</code> selector picks between them.)</p>
-
-<h3>7.4 What was removed — watch-by-pubkey and the DHT</h3>
-<p>Until August 2026 e2eMoQ carried a <em>second</em> addressing model alongside the one above. A broadcaster could mint an Ed25519 keypair in the browser, use <code>base32(publicKey)</code> as the stream's name, and self-publish a signed <strong>pkarr (BEP44) record to the public BitTorrent Mainline DHT</strong> mapping that key to the origin relay's iroh EndpointId. A viewer resolved the key straight off the DHT — no directory server anywhere in the path — and the Worker provisioned an edge to pull from the resolved origin.</p>
-<p>It worked, and it was proven cross-fleet. It was removed anyway, for two reasons that outweigh the capability it added:</p>
-<ul>
-  <li><strong>It was never what did the cross-fleet routing.</strong> The brokered path in §7.2 already hands the broker the origin plus a subscribe-scoped pull token and lets it place the viewer on their geo-nearest fleet. Discovery-by-DHT was a second implementation of a problem already solved — and solved without publishing anything.</li>
-  <li><strong>It published in the clear, to a public network.</strong> The record was world-readable by design: anyone crawling the DHT could see that a given key was live and which origin carried it. The media on that path was also deliberately <em>not</em> end-to-end encrypted, because the point was that a stranger's client could subscribe without a content key. Both properties are the inverse of what the rest of this system promises, so the codebase was asserting two contradictory privacy models at once.</li>
-</ul>
-<p>What remains is a single path: one stream handle, always encrypted, decodable only by someone holding both the share link and the broadcast's passcode. <strong>Nothing about a e2eMoQ broadcast is published to any public directory, DHT, or index.</strong></p>
-<p class="small">Retired with it: the Worker's <code>/api/publish</code> and <code>/api/edge</code> provisioning routes, and the last references to the standalone <code>luke.moqcdn.net</code> directory (whose <code>/api/register</code>&nbsp;/&nbsp;<code>/api/resolve</code> service had already been withdrawn).</p>
+<h3>7.3 There is no directory, and no discovery</h3>
+<p>A viewer reaches a broadcast one way: by holding the link. There is no index, no lookup
+service, no public record, and nothing published to any outside network that would reveal that a
+stream exists or where it is carried. <strong>Nothing about an e2eMoQ broadcast appears in any
+public directory, DHT, or index.</strong></p>
+<p>This is worth stating explicitly because an earlier generation of this codebase, upstream and
+before e2eMoQ was forked from it, did the opposite: a broadcaster minted a keypair, used
+<code>base32(publicKey)</code> as the stream name, and self-published a signed pkarr record to the
+public BitTorrent Mainline DHT so any client could resolve it. That record was world-readable by
+design, and the media on that path was deliberately <em>not</em> end-to-end encrypted — the whole
+point was that a stranger could subscribe without a key. Both properties are the inverse of what
+this system promises, so the code asserted two contradictory privacy models at once.</p>
+<p>It was removed upstream on 2026-08-15. <strong>No code for it has ever existed in this
+repository</strong>, and the single remaining path is: one stream handle, always encrypted,
+decodable only by someone holding the share link — plus the passcode, if the broadcaster armed
+Protect.</p>
 
 <h2>8. Teardown</h2>
-<p>On stop or tab close, the browser calls <code>POST /api/stats/broadcast/:id/end</code>. The Worker marks the broadcast ended in D1; the broker reclaims the relay slot. Content keys are per-session; a restarted broadcast receives a fresh key, so previously distributed keys cannot decrypt a new session.</p>
+<p>On stop or tab close, the browser calls <code>POST /api/stats/broadcast/:id/end</code>. The Worker marks the broadcast ended in D1. Nothing has to be reclaimed: no relay was ever provisioned, and the tokens simply expire. Content keys are per-session; a restarted broadcast receives a fresh key, so previously distributed keys cannot decrypt a new session.</p>
 
 <div class="callout avoid-break">
   <p class="keyline">The model in one line</p>
-  <p style="margin:4pt 0 0">The customer token proves <strong>e2eMoQ</strong> to the broker; the broker geo-places a relay and maps e2eMoQ's public verify key onto it; the Worker mints short-lived, tightly-scoped EdDSA JWTs — signed with e2eMoQ's private key — that prove <strong>this browser</strong> to <strong>this relay</strong>; and a separate media key, derived in the browser from a link fragment that reaches <em>no</em> server, keeps the video private end-to-end.</p>
+  <p style="margin:4pt 0 0">A publish code proves <strong>a person may broadcast</strong> to us; the Worker mints short-lived, tightly-scoped EdDSA tokens — signed with e2eMoQ's private key, verified by moq.pro with the public half it can never mint from — that prove <strong>this browser</strong> may do <strong>one thing</strong> on <strong>one broadcast path</strong>; and a separate media key, derived in the browser from a link fragment that reaches <em>no</em> server, keeps the video private end-to-end.</p>
 </div>
 
 

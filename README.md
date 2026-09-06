@@ -168,8 +168,8 @@ misconfiguration into an afternoon.
 ### 3. Secrets
 
 ```sh
-# The media path. Setting this is what puts you on moq.pro; deleting it falls back to
-# the self-hosted fleet with no deploy.
+# The media path. REQUIRED — without it there is no CDN to publish to and going
+# live fails.
 cat moqpro.jwk | npx wrangler secret put MOQ_PRO_JWK
 
 # YOUR moq.pro account root. REQUIRED — see the checklist, the default is not yours.
@@ -187,7 +187,7 @@ npx wrangler secret put ADMIN_PASSWORD
 `printf '%s'` rather than a bare pipe because `openssl` emits a trailing newline that would
 otherwise land inside the secret.
 
-Full reference, including rollback and the fleet path, in [`SECRETS.md`](SECRETS.md).
+Full reference, including rotation and rollback, in [`SECRETS.md`](SECRETS.md).
 
 ---
 

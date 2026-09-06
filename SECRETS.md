@@ -13,12 +13,11 @@ npx wrangler secret list
 ## 1. The media path — moq.pro
 
 `moqProAssign()` returns non-null the instant `MOQ_PRO_JWK` (or the legacy `MOQ_PRO_K`) exists,
-and both `/route` and the publish handler take that branch first. So setting this one secret is
-what puts the service on `cdn.moq.pro`; deleting it drops back to the fleet with no deploy.
+and both `/route` and the publish handler take that branch first. This secret is **required**:
+without it there is no CDN to publish to and going live fails.
 
-> **Do not infer the backend from `wrangler.jsonc`.** The `FLEET_*` vars stay populated on
-> purpose so the fallback needs no config change, which means their presence tells you nothing
-> about what is actually carrying media. `wrangler secret list` is the answer.
+> **Check what is actually set, not what the config suggests.** `wrangler secret list` is the
+> answer; secrets are write-only, so nothing on disk records which key is live.
 
 **Use the asymmetric key, not `MOQ_PRO_K`.** With the JWK, moq.pro holds only the public half:
 it can verify our tokens and cannot mint one. `MOQ_PRO_K` is a shared symmetric secret the CDN
@@ -104,16 +103,12 @@ npx wrangler secret put ADMIN_PASSWORD
 
 `wrangler secret put` with no stdin prompts for the value and does not echo it.
 
-## 3. Not needed on moq.pro
+## 3. Leave unset
 
-Leave these unset. They are the fleet path, kept working so the fallback needs no config change:
-
-| Secret | What it is for |
+| Secret | Why |
 |---|---|
-| `TINYMOQ_PROVISION_KEY` | box bearer, fleet **direct** mode |
-| `CDN_API_TOKEN` | broker credential, fleet **brokered** mode |
-| `MOQ_AUTH_PRIVATE_JWK` | BYOK signing key for our **own** relays — a different key from `MOQ_PRO_JWK`, and they must never be the same one |
-| `MOQ_PRO_K` | the legacy symmetric moq.pro secret. Setting it alongside the JWK is harmless (the JWK wins) but pointless |
+| `MOQ_PRO_K` | the legacy **symmetric** moq.pro secret, which the CDN also holds — meaning it could mint tokens as you. Setting it alongside the JWK is harmless (the JWK wins) but pointless, and setting it *instead* is a downgrade |
+| `MOQ_PRO_KID` | an override for the key id. moq.pro adopts the `kid` from the imported JWK, so this is not needed |
 
 `REPORT_WEBHOOK` and `REPORT_FRAME_RETENTION_DAYS` are gone with the reporting feature and are
 no longer read anywhere.
@@ -125,17 +120,22 @@ npx wrangler secret list          # MOQ_PRO_JWK, ISSUE_KEY, CHALLENGE_SECRET, PU
 curl -s https://e2emoq.com/api/pubkey | head -c 200
 ```
 
-`/api/pubkey` returns the public half of `MOQ_AUTH_PRIVATE_JWK` — the **fleet** key, not the
-moq.pro one — so on this deployment it answers 503 and that is correct. The real check is a
-broadcast: open `/broadcast`, go live, and confirm the relay is `cdn.moq.pro`.
+`/api/pubkey` answers 503 on this deployment, and that is correct — it serves a key this
+configuration does not use. The real check is a broadcast: open `/broadcast`, go live, and
+confirm the relay is `cdn.moq.pro`.
 
-## Rolling back
+## Rotating the key
+
+Register the **new public half** at moq.pro first, then replace the secret:
 
 ```sh
-npx wrangler secret delete MOQ_PRO_JWK
+cat new-moqpro.jwk | npx wrangler secret put MOQ_PRO_JWK
 ```
 
-Effective on the next request — no deploy, no build. `FLEET_MODE=brokered` and `FLEET_ENDPOINT`
-are still in place and resume immediately, though the fleet needs `CDN_API_TOKEN` set to admit
-anything. If `MOQ_PRO_K` is also set, delete it too, or the legacy symmetric path takes over
-instead of the fleet.
+Effective on the next request — no deploy, no build. Do it in that order: the moment the secret
+changes, every broadcast is signed with the new key, and an unregistered key connects fine and
+dies the instant it speaks MoQ. Leave the old key enabled at moq.pro until live broadcasts have
+drained, then disable it.
+
+**Do not `secret delete MOQ_PRO_JWK`** expecting a fallback. There is no other media path
+configured; deleting it takes broadcasting down.
