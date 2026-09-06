@@ -275,7 +275,7 @@ enabled = true
 node = "sjc/1"                        # disambiguates per-relay stats in a cluster
 
 [iroh]
-enabled = false                       # not needed; see §10 of federation-roadmap
+enabled = false                       # not needed: relay->relay dialling only
 ```
 
 ### How our existing tokens line up
@@ -323,7 +323,7 @@ linger  = "5s"                                   # broadcast survives publisher 
 **mTLS is the better answer for peer auth.** Set `server.tls.root` to a CA and any peer
 presenting a cert chaining to it gets full access scoped to the connection path — a peer
 dialing `/` gets cluster-wide access. That is likely to remove the `&pull=` token juggling
-described in `federation-roadmap.html` §9, and it sidesteps the `--cluster` claim that
+described above, and it sidesteps the `--cluster` claim that
 `moq-token-cli` 0.5.29 could not emit without a local patch.
 
 Note `--cluster-root` and `--cluster-node` were **removed** upstream; a relay errors at
