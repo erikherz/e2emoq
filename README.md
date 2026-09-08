@@ -31,6 +31,36 @@ resynchronise, and a tampering relay fails the GCM tag rather than corrupting th
 context. The chat server relays text it cannot read, which also means there is nothing for
 anyone to moderate.
 
+### Recording, without giving anyone a key
+
+A viewer can press **Record** while watching and get a file back; **Open a recording** plays it
+again in the page. It opens only with the same share link that opened the broadcast, plus the
+passcode if one was set.
+
+The interesting part is what does *not* happen. **The bytes written to disk are the exact
+ciphertext that came off the wire** — nothing is decrypted, re-encoded, or re-encrypted on the
+way out. Recording is `append these bytes`. So:
+
+- The recording inherits the stream's property for free. It is opaque without the link.
+- The file never touches this Worker. It is saved to the viewer's own device.
+- There is no way for the feature to get the encryption wrong, because it performs none.
+
+This matters beyond convenience. "We need recording, so the key has to reach the server" is a
+tempting and false step — it converts *we cannot decrypt* from a structural fact into a policy,
+and a policy can be compelled. Capturing frames that are already sealed avoids the trade
+entirely.
+
+Two limits, since they are the reason to reach for something else:
+
+- **~512 MB in memory** — roughly three to four hours at the default bitrate. Past that it
+  stops and says so. Streaming to IndexedDB would lift it.
+- **Playback is paced by the original timestamps**, so a recording replays at the rate it was
+  broadcast, network stalls included. That is a faithful record, not a flattering one.
+
+Implementation is `src/recording.ts` plus a tap on the existing decrypt seam. The file format is
+documented at the top of that file: magic, a **sealed** header (the decoder config, so a
+recording does not disclose even its own resolution), then length-prefixed frames.
+
 ### What it cannot do
 
 Stated here rather than discovered later:
@@ -203,6 +233,7 @@ Full reference, including rotation and rollback, in [`SECRETS.md`](SECRETS.md).
 | **`index.html`** | `<title>`, the `<h1>` wordmark, `#site-tagline`, `.hero-title` | branding |
 | **`public/favicon.svg`** | your mark | then `node scripts/make-touch-icon.mjs` to regenerate the PNG — **link unfurlers prefer the PNG**, so a stale one shows the wrong icon in every shared link |
 | **`package.json`** | `name` (currently `moqplay`) | cosmetic |
+| **`src/recording.ts`** | `MAX_BYTES`, and `MAGIC` if you fork the format | the buffer cap is memory-bound; changing `MAGIC` makes existing recordings unreadable |
 | **`src/worker/db/schema.sql`** | the `broadcaster_access` seed | a placeholder; only matters if you re-enable OAuth |
 
 Cosmetic only: `anonymous@e2emoq.com` appears in `schema.sql`, `src/worker/index.ts` and
@@ -242,6 +273,14 @@ node scripts/e2e/publish-code-fallback.mjs https://your-domain
 
 # Text contrast, measured on the rendered page rather than trusted from the palette.
 node scripts/e2e/contrast.mjs https://your-domain
+
+# Recording: a file is produced, it carries no plaintext config, the right link opens it —
+# and, the assertion that matters, a DIFFERENT link does not.
+node scripts/e2e/recording.mjs https://your-domain
+
+# What shape is the watch element's catalog? Run this when replay stops configuring a decoder;
+# the accessor path is vendored-library internals and has moved before.
+node scripts/e2e/catalog-shape.mjs
 ```
 
 A useful check on a key you already have:
