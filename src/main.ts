@@ -829,7 +829,7 @@ import { encodeQr, type QrMatrix } from "./media/qr";
 // and watching, which is exactly the identity this app no longer holds. Rather than keep pages
 // that could only render blanks, the surface is gone. The kill switch was never part of them
 // and survives at /api/admin/kill and friends.
-type View = "landing" | "broadcast" | "watch";
+type View = "landing" | "broadcast" | "watch" | "play";
 
 // Generate a random stream ID (5 lowercase alphanumeric characters)
 function generateRandomId(): string {
@@ -881,6 +881,106 @@ const DONT_SHARE_MARKER = "NOT-THE-SHARE-LINK--USE-THE-COPY-BUTTON";
 const broadcastUrl = (streamId: string, suffix = ""): string =>
   `/?stream=${streamId}${suffix}#${DONT_SHARE_MARKER}`;
 
+/**
+ * /play — open an archived recording.
+ *
+ * The three inputs, and why each is asked for the way it is:
+ *
+ *   file      the recording. Nothing is uploaded; it is read locally and decoded in the tab.
+ *   key       the `#k=` secret from the share link the recording was made under. Prefilled
+ *             when the page is opened WITH a fragment, so a full share link pasted into the
+ *             address bar as /play#k=... just works.
+ *   stream id needed before the header can be opened, because the derivation is keyed to it —
+ *             and the header is where the id would otherwise live, which is circular. Taken
+ *             from the filename (recordings save as `<id>.e2emoq`) and left editable, so a
+ *             renamed file is recoverable rather than dead.
+ *
+ * A passcode field appears only after a first attempt fails, because most recordings do not
+ * have one and asking up front implies otherwise.
+ */
+function initPlayView(): void {
+  const view = document.getElementById("play-view");
+  const file = document.getElementById("play-file") as HTMLInputElement | null;
+  const keyIn = document.getElementById("play-key") as HTMLInputElement | null;
+  const idIn = document.getElementById("play-id") as HTMLInputElement | null;
+  const passIn = document.getElementById("play-pass") as HTMLInputElement | null;
+  const passRow = document.getElementById("play-pass-row");
+  const go = document.getElementById("play-go") as HTMLButtonElement | null;
+  const stopBtn = document.getElementById("play-stop") as HTMLButtonElement | null;
+  const canvas = document.getElementById("play-canvas") as HTMLCanvasElement | null;
+  const note = document.getElementById("play-note");
+  const time = document.getElementById("play-time");
+  if (!view || !file || !keyIn || !idIn || !passIn || !passRow || !go || !stopBtn || !canvas || !note || !time) return;
+
+  view.classList.remove("hidden");
+
+  // A share link pasted as /play#k=... fills the key in for free.
+  const frag = new URLSearchParams(location.hash.replace(/^#/, ""));
+  if (frag.get("k")) keyIn.value = frag.get("k") as string;
+
+  file.addEventListener("change", () => {
+    const f = file.files?.[0];
+    if (!f) return;
+    const guess = f.name.replace(/\.e2emoq$/i, "");
+    if (/^[a-z0-9]{5}$/.test(guess) && !idIn.value) idIn.value = guess;
+    note.textContent = "";
+  });
+
+  let playing: { stop(): void } | null = null;
+  const stop = () => {
+    playing?.stop();
+    playing = null;
+    stopBtn.classList.add("hidden");
+  };
+  stopBtn.addEventListener("click", stop);
+
+  go.addEventListener("click", async () => {
+    const f = file.files?.[0];
+    if (!f) { note.textContent = "Choose a recording first."; return; }
+    const secret = keyIn.value.trim();
+    if (!secret) { note.textContent = "Paste the key from the share link (the part after #k=)."; return; }
+    const streamId = idIn.value.trim().toLowerCase();
+    if (!/^[a-z0-9]{5}$/.test(streamId)) {
+      note.textContent = "That stream id does not look right — five letters or digits.";
+      return;
+    }
+
+    stop();
+    go.disabled = true;
+    note.textContent = "Opening\u2026";
+    try {
+      const parsed = await rec.parseRecording(await f.arrayBuffer(), secret, streamId);
+      if (!parsed) {
+        // One message for every wrong input. Saying WHICH one was wrong would let someone
+        // holding the file narrow down a key by trying pieces of it.
+        note.textContent =
+          "Could not open that file with that key and id. If the broadcast had a passcode, add it below.";
+        passRow.classList.remove("hidden");
+        return;
+      }
+      if (parsed.header.passcoded && !passIn.value.trim()) {
+        passRow.classList.remove("hidden");
+        note.textContent = "This recording was made with a passcode. Enter it and open again.";
+        return;
+      }
+      note.textContent = "";
+      stopBtn.classList.remove("hidden");
+      playing = await rec.playRecording(parsed, secret, canvas, {
+        passcode: passIn.value.trim() || undefined,
+        onProgress: (sec) => {
+          const m = Math.floor(sec / 60);
+          time.textContent = `${m}:${Math.floor(sec % 60).toString().padStart(2, "0")}`;
+        },
+        onEnd: () => { note.textContent = "End of recording."; },
+      });
+    } catch (e) {
+      note.textContent = `Could not play that recording: ${(e as Error).message}`;
+    } finally {
+      go.disabled = false;
+    }
+  });
+}
+
 // Determine current view and stream ID from URL
 async function getRouteInfo(): Promise<{ view: View; streamId: string }> {
   const path = window.location.pathname;
@@ -899,6 +999,12 @@ async function getRouteInfo(): Promise<{ view: View; streamId: string }> {
     // key and no longer even yields a token, and the form rejected a pasted share link. Land
     // on the landing page rather than on a form that cannot succeed.
     return { view: "landing", streamId: "" };
+  }
+
+  // Playback page: /play — open a saved recording. No stream, no network, no id in the URL:
+  // everything it needs comes from the file the user picks and the key they paste.
+  if (path === "/play") {
+    return { view: "play", streamId: "" };
   }
 
   // Broadcast page: /broadcast — mint a fresh stream id and go live via the fleet. Rewrites
@@ -4653,7 +4759,9 @@ async function init() {
   const { user, geo } = await getCurrentUser();
   updateAuthUI(user, geo);
 
-  if (view === "landing") {
+  if (view === "play") {
+    initPlayView();
+  } else if (view === "landing") {
     initLandingView();
   } else if (view === "broadcast") {
     initBroadcastView(streamId, user);

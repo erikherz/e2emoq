@@ -218,7 +218,8 @@ export default {
     const isStreamStatsPage = /^\/[a-z0-9]{5}\/stats$/.test(url.pathname);
     const isClearDataPage = url.pathname === "/cleardata";
     // Client-routed app pages (the SPA renders these; no matching asset file exists).
-    const isAppPage = url.pathname === "/broadcast" || url.pathname === "/watch";
+    const isAppPage =
+      url.pathname === "/broadcast" || url.pathname === "/watch" || url.pathname === "/play";
 
     if (isStreamId || isStatsPage || isStreamStatsPage || isClearDataPage || isAppPage) {
       const indexUrl = new URL("/index.html", url.origin);

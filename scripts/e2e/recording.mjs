@@ -13,6 +13,9 @@
 //   3. The correct link opens it and paints real pixels.
 //   4. A DIFFERENT link does not open it, and says so without distinguishing "wrong key"
 //      from "not our file".
+//   5. /play opens the same file with a pasted key and no live stream — which is the case that
+//      matters for an archive, since the broadcast is over by definition. And a wrong key
+//      pasted there is refused too.
 //
 // Exit 0 = pass. Exit 1 = fail, with the reason on stderr.
 
@@ -165,6 +168,84 @@ try {
   else if (!/Could not open|needs its key/.test(wrongStatus)) {
     fail(`wrong key gave an unexpected message: ${JSON.stringify(wrongStatus)}`);
   } else STEP("wrong key refused, with the same message a non-file gets");
+
+  // ── 5. /play — the archive door ────────────────────────────────────────────────
+  // Deliberately with the broadcaster still up but never consulted: /play must work with no
+  // stream, no route, and no network beyond loading the page itself.
+  const key = shareUrl.split("#k=")[1].split("&")[0];
+  const pp = await browser.newPage();
+  pp.on("pageerror", (e) => console.log(`     [play pageerror] ${e.message}`));
+  await pp.goto(`${ORIGIN}/play`, { waitUntil: "networkidle2", timeout: 60000 });
+  await pp.waitForSelector("#play-file", { timeout: 20000 });
+
+  await (await pp.$("#play-file")).uploadFile(join(dlDir, files[0]));
+  // The stream id should fill itself in from the filename; a user who has to know what a
+  // "stream id" is has already been failed by the page.
+  const auto = await pp.$eval("#play-id", (e) => e.value);
+  if (auto === files[0].replace(/\.e2emoq$/, "")) STEP(`/play filled the stream id from the filename (${auto})`);
+  else fail(`/play did not fill the stream id from the filename (got ${JSON.stringify(auto)})`);
+
+  await pp.evaluate((k) => {
+    document.getElementById("play-key").value = k;
+  }, key);
+  await pp.click("#play-go");
+
+  const playLit = await pp
+    .waitForFunction(
+      () => {
+        const c = document.getElementById("play-canvas");
+        if (!c || c.width < 64) return false;
+        const p = document.createElement("canvas");
+        p.width = 32; p.height = 18;
+        const x = p.getContext("2d", { willReadFrequently: true });
+        try { x.drawImage(c, 0, 0, 32, 18); } catch { return false; }
+        const d = x.getImageData(0, 0, 32, 18).data;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 30) n++;
+        return n > 40 ? n : false;
+      },
+      { timeout: 40000, polling: 500 }
+    )
+    .catch(() => null);
+  if (playLit) STEP(`/play decoded the recording (${await playLit.jsonValue()} lit of 576)`);
+  else {
+    const why = await pp.$eval("#play-note", (e) => e.textContent || "");
+    fail(`/play never painted a frame — note=${JSON.stringify(why)}`);
+  }
+
+  // Negative: a wrong key must be refused, with one message for every wrong input.
+  const wrongPlay = await browser.newPage();
+  await wrongPlay.goto(`${ORIGIN}/play`, { waitUntil: "networkidle2", timeout: 60000 });
+  await wrongPlay.waitForSelector("#play-file", { timeout: 20000 });
+  await (await wrongPlay.$("#play-file")).uploadFile(join(dlDir, files[0]));
+  await wrongPlay.evaluate(() => {
+    document.getElementById("play-key").value = "A".repeat(43);
+  });
+  await wrongPlay.click("#play-go");
+  await wrongPlay.waitForFunction(
+    () => /Could not open/.test(document.getElementById("play-note")?.textContent || ""),
+    { timeout: 20000, polling: 500 }
+  ).catch(() => null);
+  const wrongNote = await wrongPlay.$eval("#play-note", (e) => e.textContent || "");
+  // Count PIXELS, not width. An untouched canvas reports 300x150 by default, so a dimension
+  // check passes on a player that decoded absolutely nothing — which is exactly the state a
+  // wrong key should produce, and exactly what this assertion exists to catch.
+  const painted = await wrongPlay.evaluate(() => {
+    const c = document.getElementById("play-canvas");
+    if (!c) return false;
+    const p = document.createElement("canvas");
+    p.width = 32;
+    p.height = 18;
+    const x = p.getContext("2d", { willReadFrequently: true });
+    try { x.drawImage(c, 0, 0, 32, 18); } catch { return false; }
+    const d = x.getImageData(0, 0, 32, 18).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 30) n++;
+    return n > 40;
+  });
+  if (painted) fail("/play decoded a recording with the WRONG key");
+  else if (!/Could not open/.test(wrongNote)) fail(`/play gave an unexpected message: ${JSON.stringify(wrongNote)}`);
+  else STEP("/play refused a wrong key");
 
   await bc.close();
 } catch (e) {

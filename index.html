@@ -1880,6 +1880,21 @@
         /* The consent line is not fine print: it states who ends up seeing this, which is the
            one thing a viewer cannot infer from a Record button. */
         .msg-consent { font-size: 12.5px; color: var(--text-secondary); margin: 8px 0 0; line-height: 1.45; }
+
+        /* ── /play — open an archived recording ─────────────────────────── */
+        .play-wrap { max-width: 640px; margin: 0 auto; }
+        .play-title { margin: 0 0 6px; }
+        .play-sub { color: var(--text-secondary); font-size: 14.5px; margin: 0 0 22px; line-height: 1.55; }
+        .play-field { display: block; margin-bottom: 14px; }
+        .play-field > span { display: block; font-size: 13.5px; margin-bottom: 5px; }
+        .play-field small { display: block; font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+        .play-field input[type="text"] { width: 100%; }
+        .play-bar { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+        .play-note { font-size: 13.5px; color: var(--text-secondary); margin: 10px 0 0; min-height: 1.2em; line-height: 1.5; }
+        /* Sized only once a frame is drawn — an empty black box above the form would read as a
+           broken player rather than as a player waiting for a file. */
+        .play-canvas { width: 100%; margin-top: 14px; border-radius: 4px; background: #000; display: block; }
+        .play-canvas:not([width]) { display: none; }
 </style>
 </head>
 <body>
@@ -2112,6 +2127,52 @@
                 </section>
                 <div id="broadcast-chat" class="chat-panel hidden"></div>
             </div>
+        </div>
+
+        <!-- Playback View — open a saved recording. Nothing is uploaded and no stream is
+             contacted: the file is read locally and decoded in this tab, exactly as the live
+             path decodes frames off the wire. -->
+        <div id="play-view" class="hidden">
+            <section class="play-wrap">
+                <h2 class="play-title">Open a recording</h2>
+                <p class="play-sub">
+                    A recording is ciphertext. It opens only with the key from the share link it
+                    was made under — the same key that decrypted the live broadcast. Nothing here
+                    is sent to us; the file never leaves this device.
+                </p>
+
+                <label class="play-field">
+                    <span>Recording file</span>
+                    <input type="file" id="play-file" accept=".e2emoq,application/octet-stream">
+                </label>
+
+                <label class="play-field">
+                    <span>Key <small>the part of the share link after <code>#k=</code></small></span>
+                    <input type="text" id="play-key" spellcheck="false" autocomplete="off"
+                           placeholder="paste the key here">
+                </label>
+
+                <label class="play-field">
+                    <span>Stream id <small>filled in from the filename; edit if the file was renamed</small></span>
+                    <input type="text" id="play-id" maxlength="5" spellcheck="false"
+                           autocomplete="off" placeholder="xxxxx">
+                </label>
+
+                <div class="play-field hidden" id="play-pass-row">
+                    <label for="play-pass"><span>Passcode <small>only if the broadcast had one</small></span></label>
+                    <input type="text" id="play-pass" spellcheck="false" autocomplete="off">
+                </div>
+
+                <div class="play-bar">
+                    <button id="play-go" class="btn btn-primary" type="button">Open</button>
+                    <button id="play-stop" class="btn btn-quiet hidden" type="button">Stop</button>
+                    <span id="play-time" class="rec-status">0:00</span>
+                    <span class="rec-spacer"></span>
+                </div>
+                <p id="play-note" class="play-note" role="status" aria-live="polite"></p>
+
+                <canvas id="play-canvas" class="play-canvas"></canvas>
+            </section>
         </div>
 
         <!-- Watch View -->
