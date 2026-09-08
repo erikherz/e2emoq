@@ -111,7 +111,7 @@ function mediaCryptoPatch(): Plugin {
 
   // --- seam 3: decrypt both (consumer.js, before Format.decode) ---
   const DECRYPT_FIND = `const decoded = this.#format.decode(next);`;
-  const DECRYPT_REPLACE = `const __mc = globalThis.__VIVOH_MEDIA_CRYPTO__; let __raw = next; if (__mc && __mc.shouldDecrypt()) { try { __raw = await __mc.beforeDecode(next); } catch (e) { console.error("[media-crypto] decrypt failed; dropping frame", e); continue; } } const decoded = this.#format.decode(__raw);`;
+  const DECRYPT_REPLACE = `const __mc = globalThis.__VIVOH_MEDIA_CRYPTO__; let __raw = next; if (__mc && __mc.shouldDecrypt()) { try { __raw = await __mc.beforeDecode(next, this.#track?.name, index === 0); } catch (e) { console.error("[media-crypto] decrypt failed; dropping frame", e); continue; } } const decoded = this.#format.decode(__raw);`;
 
   let video = 0;
   let audio = 0;

@@ -217,27 +217,11 @@ try {
   STEP(`sample 1: lit=${a.lit}/${a.total} sum=${a.sum}`);
   STEP(`sample 2: lit=${b.lit}/${b.total} sum=${b.sum}`);
 
-  // The report control is the only abuse sensor there is: we cannot see the stream, so if a
-  // viewer has no way to tell us, we learn about a problem from outside or not at all.
-  // Asserted here rather than in its own script because it has to be present on a REAL
-  // playing stream — it mounts as part of the watch path, where a silent failure is invisible.
-  const reportUi = await vw.evaluate(() => {
-    const btn = document.querySelector(".watch-report-btn");
-    if (!btn) return { ok: false, reason: "no report control on the watch page" };
-    btn.click();
-    const opened = [...document.querySelectorAll("h2")].some((h) => /report this stream/i.test(h.textContent));
-    if (!opened) return { ok: false, reason: "the report control does not open a dialog" };
-    // Nothing may pre-fill the viewer's link: handing over a key must be a deliberate act.
-    // Visibility, not existence — the input is always in the DOM and its ROW is what the
-    // server's config reveals, so testing for the element would report "offered" either way.
-    const box = document.querySelector("#report-evidence");
-    const row = document.querySelector("#report-evidence-row");
-    const shown = !!row && getComputedStyle(row).display !== "none";
-    return { ok: true, offered: shown, prechecked: !!box?.checked };
-  });
-  if (!reportUi.ok) fail(reportUi.reason);
-  else if (reportUi.prechecked) fail("the evidence-link box is pre-ticked — a key would leave by default");
-  else STEP(`report control present (evidence link ${reportUi.offered ? "offered, unticked" : "not offered"})`);
+  // Reporting was removed from e2eMoQ with the rest of the moderation surface, so the
+  // assertion that used to live here (a report control must exist on a REAL playing stream)
+  // was checking for a feature this product deliberately does not have. Recording replaced it
+  // as the thing worth asserting on the watch page — see scripts/e2e/recording.mjs, which
+  // proves both that a recording works and that a wrong key cannot open one.
 
   // ── 3. Verdict ──────────────────────────────────────────────────────────────────
   const litEnough = b.lit > b.total * 0.05;

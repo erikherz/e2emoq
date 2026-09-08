@@ -37,6 +37,25 @@ const NONCE_BYTES = 12;
 
 type Mode = "publisher" | "viewer";
 
+/**
+ * An observer of incoming CIPHERTEXT frames, for viewer-side recording (src/recording.ts).
+ *
+ * Deliberately placed before decryption: a recorder that saw plaintext would be a second
+ * place plaintext exists, and there is currently exactly one. What this hands out is the
+ * bytes as they arrived, which the recorder can write to disk without holding a key.
+ */
+export type FrameTap = (
+  frame: Uint8Array,
+  trackName: string | undefined,
+  firstInGroup: boolean
+) => void;
+let frameTap: FrameTap | null = null;
+
+/** Install (or clear, with null) the ciphertext observer. */
+export function setFrameTap(tap: FrameTap | null): void {
+  frameTap = tap;
+}
+
 // --- module state (one role per page: a broadcast page OR a watch page) ------
 let mode: Mode | null = null;
 let armed = false; // we KNOW this stream is encrypted; encrypt/decrypt is live
@@ -130,7 +149,21 @@ export function decryptStats(): { failures: number; successes: number } {
   return { failures: decryptFailures, successes: decryptSuccesses };
 }
 
-async function decryptFrame(frame: Uint8Array): Promise<Uint8Array> {
+async function decryptFrame(
+  frame: Uint8Array,
+  trackName?: string,
+  firstInGroup = false
+): Promise<Uint8Array> {
+  // Tap BEFORE the key check: a recording should capture frames that arrive while the key is
+  // still in flight, and it does not need one to store them.
+  if (frameTap) {
+    try {
+      frameTap(frame, trackName, firstInGroup);
+    } catch (e) {
+      console.error("[media-crypto] frame tap threw; dropping it", e);
+      frameTap = null;
+    }
+  }
   await keyReady;
   if (!key) throw new Error("media-crypto: decrypt with no key");
   const vlen = varintLen(frame[0]);
@@ -179,7 +212,7 @@ interface MediaCryptoHooks {
   closeGroup(group: GroupLike): void; // chained close so pending writes flush first
   // audio path: one group per frame (Track.writeFrame), closed immediately
   writeAndClose(group: GroupLike, frame: Uint8Array): void;
-  beforeDecode(frame: Uint8Array): Promise<Uint8Array>;
+  beforeDecode(frame: Uint8Array, trackName?: string, firstInGroup?: boolean): Promise<Uint8Array>;
 }
 
 function install(): void {
@@ -230,7 +263,7 @@ function install(): void {
         }
       });
     },
-    beforeDecode: (frame) => decryptFrame(frame),
+    beforeDecode: (frame, trackName, firstInGroup) => decryptFrame(frame, trackName, firstInGroup ?? false),
   };
   (globalThis as unknown as { __VIVOH_MEDIA_CRYPTO__?: MediaCryptoHooks }).__VIVOH_MEDIA_CRYPTO__ =
     hooks;
@@ -404,6 +437,52 @@ export async function deriveMediaKey(secretB64url: string, opts: DeriveOpts): Pr
  */
 export async function deriveChatKey(secretB64url: string, opts: DeriveOpts): Promise<CryptoKey> {
   return deriveFor(secretB64url, opts, "e2emoq-chat-key-v1");
+}
+
+/**
+ * The key that seals a recording's HEADER — its decoder config, taken from the catalog.
+ *
+ * Separate HKDF context from the media key, so a recording file discloses nothing (not even
+ * its own resolution) to anyone without the link, while the frames inside it stay sealed under
+ * the media key they arrived with. The passcode is mixed in exactly as it is for media, so a
+ * protected broadcast produces a protected recording.
+ */
+export async function deriveRecordingKey(
+  secretB64url: string,
+  opts: DeriveOpts
+): Promise<CryptoKey> {
+  return deriveFor(secretB64url, opts, "e2emoq-recording-key-v1");
+}
+
+/**
+ * The media key as a VALUE rather than as module state.
+ *
+ * {@link deriveMediaKey} installs into the live pipeline; replaying a recording must not
+ * disturb that, because a viewer can open a recording while still watching something.
+ */
+export async function deriveMediaKeyStandalone(
+  secretB64url: string,
+  opts: DeriveOpts
+): Promise<CryptoKey> {
+  return deriveFor(secretB64url, opts, HKDF_INFO);
+}
+
+/**
+ * Open one frame under a supplied key — the replay path's counterpart to {@link decryptFrame},
+ * with no module state and no effect on the live decrypt statistics.
+ */
+export async function decryptFrameWith(k: CryptoKey, frame: Uint8Array): Promise<Uint8Array> {
+  const vlen = varintLen(frame[0]);
+  const ts = frame.subarray(0, vlen);
+  const nonce = frame.subarray(vlen, vlen + NONCE_BYTES);
+  const ct = frame.subarray(vlen + NONCE_BYTES);
+  const pt = new Uint8Array(
+    await crypto.subtle.decrypt({ name: ALGO, iv: nonce, additionalData: ts }, k, ct)
+  );
+  const out = new Uint8Array(vlen + pt.byteLength);
+  out.set(ts, 0);
+  out.set(pt, vlen);
+  return out;
 }
 
 /**

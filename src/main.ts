@@ -817,6 +817,7 @@ import {
   sealText,
   openText,
 } from "./crypto/media-crypto";
+import * as rec from "./recording";
 import { initChat, type ChatHandle } from "./chat/chat-client";
 import { describeLocation } from "./geo/nearest-city";
 import { createCompositor, type CameraFacing, type Compositor } from "./media/pip-compositor";
@@ -3260,6 +3261,166 @@ async function initWatchView(streamId: string, user: User | null) {
   // from whatever these hold at the moment a message is sent or received.
   let watchLinkSecret = "";
   let watchPasscode: string | undefined;
+
+  // ---- Viewer-side recording ------------------------------------------------------------
+  // Mounted here rather than at the top level so it closes over watchLinkSecret and
+  // watchPasscode. Both are assigned later — the secret when the route resolves, the passcode
+  // only after the viewer answers a prompt — so anything reading them must read them late.
+  (function mountRecording() {
+    const bar = document.getElementById("rec-bar");
+    const toggle = document.getElementById("rec-toggle") as HTMLButtonElement | null;
+    const status = document.getElementById("rec-status");
+    const fileInput = document.getElementById("rec-open") as HTMLInputElement | null;
+    const panel = document.getElementById("replay-panel");
+    const rCanvas = document.getElementById("replay-canvas") as HTMLCanvasElement | null;
+    const rTime = document.getElementById("replay-time");
+    const rClose = document.getElementById("replay-close") as HTMLButtonElement | null;
+    if (!bar || !toggle || !status || !fileInput || !panel || !rCanvas || !rTime || !rClose) return;
+    bar.classList.remove("hidden");
+
+    const derive = () => ({ streamId, passcode: watchPasscode });
+
+    /**
+     * Pull replayable decoder configs out of the live catalog.
+     *
+     * Measured shape (scripts/e2e/_catalog-probe.mjs against a real stream):
+     *   broadcast.catalog.peek() -> { video: { renditions: { "video/hd": {...} } },
+     *                                 audio: { renditions: { "audio/data": {...} } } }
+     * The rendition KEY is the MoQ track name the decrypt seam reports, which is how a
+     * recorded frame gets sorted to the right decoder.
+     *
+     * The rendition value is a superset of a WebCodecs config — it also carries `container`,
+     * `jitter`, `bitrate`, `framerate`. Those are publisher/transport hints and WebCodecs
+     * rejects a config it does not recognise, so pass only the fields it defines.
+     */
+    const VIDEO_KEYS = [
+      "codec", "description", "codedWidth", "codedHeight",
+      "displayAspectWidth", "displayAspectHeight", "colorSpace", "optimizeForLatency",
+    ];
+    const AUDIO_KEYS = ["codec", "description", "sampleRate", "numberOfChannels"];
+    const pick = (o: Record<string, unknown> | undefined, keys: string[]) => {
+      if (!o) return undefined;
+      const out: Record<string, unknown> = {};
+      for (const k of keys) if (o[k] !== undefined) out[k] = o[k];
+      return out.codec ? out : undefined;
+    };
+
+    const catalogs = (): {
+      video?: Record<string, unknown>;
+      audio?: Record<string, unknown>;
+      videoTrack?: string;
+    } => {
+      try {
+        const el = document.querySelector("moq-watch") as unknown as {
+          broadcast?: { catalog?: { peek?: () => unknown } };
+        } | null;
+        const cat = el?.broadcast?.catalog?.peek?.() as
+          | {
+              video?: { renditions?: Record<string, Record<string, unknown>> };
+              audio?: { renditions?: Record<string, Record<string, unknown>> };
+            }
+          | undefined;
+        const vEntry = Object.entries(cat?.video?.renditions ?? {})[0];
+        const aEntry = Object.entries(cat?.audio?.renditions ?? {})[0];
+        return {
+          video: pick(vEntry?.[1], VIDEO_KEYS),
+          audio: pick(aEntry?.[1], AUDIO_KEYS),
+          videoTrack: vEntry?.[0],
+        };
+      } catch {
+        return {};
+      }
+    };
+
+    let ticker: number | undefined;
+    const paint = () => {
+      const on = rec.isRecording();
+      toggle.classList.toggle("recording", on);
+      toggle.lastChild!.textContent = on ? "Stop" : "Record";
+      status.textContent = on ? `Recording · ${rec.formatBytes(rec.recordedBytes())}` : "";
+    };
+
+    toggle.addEventListener("click", async () => {
+      if (rec.isRecording()) {
+        window.clearInterval(ticker);
+        const { streamId: sid, passcode } = derive();
+        const cat = catalogs();
+        const blob = await rec.stopRecording(watchLinkSecret, {
+          streamId: sid,
+          salt: watchSalt,
+          passcoded: Boolean(passcode),
+          video: cat.video,
+          audio: cat.audio,
+        });
+        paint();
+        if (!blob) {
+          status.textContent = "Nothing was captured — no frames arrived while recording.";
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${sid}.e2emoq`;
+        a.click();
+        URL.revokeObjectURL(url);
+        status.textContent = rec.didOverflow()
+          ? `Saved ${rec.formatBytes(blob.size)} — stopped at the size limit.`
+          : `Saved ${rec.formatBytes(blob.size)}. Open it with this same link.`;
+        return;
+      }
+
+      if (!watchLinkSecret) {
+        status.textContent = "This link carries no key, so there is nothing to record.";
+        return;
+      }
+      rec.startRecording(catalogs().videoTrack);
+      paint();
+      ticker = window.setInterval(paint, 500);
+    });
+
+    let playing: { stop(): void } | null = null;
+    const closeReplay = () => {
+      playing?.stop();
+      playing = null;
+      panel.classList.add("hidden");
+    };
+    rClose.addEventListener("click", closeReplay);
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      fileInput.value = "";
+      if (!file) return;
+      if (!watchLinkSecret) {
+        status.textContent = "Open the share link first — a recording needs its key to play.";
+        return;
+      }
+      status.textContent = "Opening…";
+      const parsed = await rec.parseRecording(await file.arrayBuffer(), watchLinkSecret, streamId);
+      if (!parsed) {
+        // Same answer for "not our file" and "wrong key" — distinguishing them would tell an
+        // attacker which of the two they got wrong.
+        status.textContent = "Could not open that file with this link.";
+        return;
+      }
+      status.textContent = "";
+      closeReplay();
+      panel.classList.remove("hidden");
+      // A passcoded recording needs the passcode again — it was never written to the file.
+      let pass = watchPasscode;
+      if (parsed.header.passcoded && !pass) pass = (await promptPasscode()) || undefined;
+      playing = await rec.playRecording(parsed, watchLinkSecret, rCanvas, {
+        passcode: pass,
+        onProgress: (sec) => {
+          const m = Math.floor(sec / 60);
+          const ss = Math.floor(sec % 60).toString().padStart(2, "0");
+          rTime.textContent = `${m}:${ss}`;
+        },
+        onEnd: () => {
+          rTime.textContent = `${rTime.textContent} · end`;
+        },
+      });
+    });
+  })();
   // Whether the LINK said a passcode was needed. Not the same as whether one is actually
   // required now -- the broadcaster may have switched it on or off since this link was sent --
   // which is exactly why the failure path below distinguishes "wrong" from "added".

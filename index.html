@@ -1840,7 +1840,29 @@
             .hero-title { font-size: 1.8rem; margin-bottom: 0.75rem; }
         }
 
-    </style>
+    
+        /* ── Viewer-side recording ─────────────────────────────────────────
+           The bar sits under the player rather than over it: an overlay on a
+           video the viewer is trying to watch is a nuisance, and this control
+           is used twice per session at most. */
+        .rec-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+        .rec-spacer { flex: 1 1 auto; }
+        .rec-status { font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+        .btn-rec .rec-dot {
+            display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+            background: currentColor; margin-right: 7px; vertical-align: baseline;
+        }
+        /* Recording is a state the viewer must be able to see at a glance — a button that
+           looks the same whether or not it is capturing is how people lose an hour. */
+        .btn-rec.recording { background: #7f2b28; border-color: #a33a35; color: #fff; }
+        .btn-rec.recording .rec-dot { animation: rec-pulse 1.6s ease-in-out infinite; }
+        @keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+        @media (prefers-reduced-motion: reduce) { .btn-rec.recording .rec-dot { animation: none; } }
+
+        .replay-panel { margin-top: 10px; }
+        .replay-panel canvas { width: 100%; display: block; background: #000; border-radius: 4px; }
+        .replay-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+</style>
 </head>
 <body>
     <div class="container">
@@ -2065,6 +2087,26 @@
                     <moq-watch muted visible="always">
                         <canvas></canvas>
                     </moq-watch>
+                    <!-- Recording is VIEWER-side and stays entirely on this device. What gets
+                         written is the ciphertext exactly as it arrived, so a recording is as
+                         unreadable without the link as the live stream is. -->
+                    <div id="rec-bar" class="rec-bar hidden">
+                        <button id="rec-toggle" class="btn btn-rec" type="button">
+                            <span class="rec-dot" aria-hidden="true"></span>Record
+                        </button>
+                        <span id="rec-status" class="rec-status" role="status" aria-live="polite"></span>
+                        <span class="rec-spacer"></span>
+                        <label class="btn btn-quiet" for="rec-open">Open a recording</label>
+                        <input type="file" id="rec-open" accept=".e2emoq,application/octet-stream" hidden>
+                    </div>
+                    <div id="replay-panel" class="replay-panel hidden">
+                        <canvas id="replay-canvas"></canvas>
+                        <div class="replay-bar">
+                            <span id="replay-time" class="rec-status">0:00</span>
+                            <span class="rec-spacer"></span>
+                            <button id="replay-close" class="btn btn-quiet" type="button">Close</button>
+                        </div>
+                    </div>
                 </section>
                 <div id="watch-chat" class="chat-panel hidden"></div>
             </div>
