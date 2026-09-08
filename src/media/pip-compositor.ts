@@ -210,6 +210,23 @@ export function createCompositor(): Compositor {
   // The message currently on screen, if any. Held as a plain element rather than a track so
   // the caller keeps control of playback — pausing, replaying, and taking it down are theirs.
   let messageVideo: HTMLVideoElement | null = null;
+  // Geometry for the message inset. Width drives; height follows the clip's own aspect, so it
+  // is never stretched. Placed on first appearance and then left where the broadcaster put it.
+  let msgW = Math.round(CANVAS_W * 0.44);
+  let msgX = 24;
+  let msgY = 0;
+  let msgPlaced = false;
+  const MSG_MIN_W = 160;
+  const msgAspect = () => {
+    const v = messageVideo;
+    return v && v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
+  };
+  const msgH = () => Math.round(msgW / msgAspect());
+  const clampMsg = () => {
+    msgW = Math.max(MSG_MIN_W, Math.min(msgW, CANVAS_W));
+    msgX = Math.max(0, Math.min(msgX, CANVAS_W - msgW));
+    msgY = Math.max(0, Math.min(msgY, CANVAS_H - msgH()));
+  };
   const canvas = document.createElement("canvas");
   canvas.width = CANVAS_W;
   canvas.height = CANVAS_H;
@@ -481,6 +498,9 @@ export function createCompositor(): Compositor {
   const qrZoneAt = (pt: { x: number; y: number }): Zone | null =>
     qrPlate ? zoneIn(pt, qrX, qrY, qrPlate.width, qrPlate.height) : null;
 
+  const msgZoneAt = (pt: { x: number; y: number }): Zone | null =>
+    messageVideo && msgPlaced ? zoneIn(pt, msgX, msgY, msgW, msgH()) : null;
+
   const renderQrPlate = (matrix: QrMatrix | null) => {
     qrMatrix = matrix;
     if (!matrix) {
@@ -610,10 +630,16 @@ export function createCompositor(): Compositor {
   const drawMessage = () => {
     const v = messageVideo;
     if (!v || !v.videoWidth || !v.videoHeight) return;
-    const boxW = Math.round(CANVAS_W * 0.44);
-    const boxH = Math.round(boxW * (9 / 16));
-    const x = 24;
-    const y = CANVAS_H - boxH - 24;
+    if (!msgPlaced) {
+      // First appearance sits lower-left, clear of the camera inset's default lower-right.
+      msgY = CANVAS_H - msgH() - 24;
+      msgPlaced = true;
+      clampMsg();
+    }
+    const boxW = msgW;
+    const boxH = msgH();
+    const x = msgX;
+    const y = msgY;
 
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.55)";
@@ -696,7 +722,7 @@ export function createCompositor(): Compositor {
   startLoop();
 
   // Move and resize the camera inset (only meaningful when both screen + camera are on).
-  type Target = "cam" | "qr";
+  type Target = "cam" | "qr" | "msg";
   let mode: Zone | null = null;      // what the pointer grabbed, null when idle
   let target: Target | null = null;  // WHICH object it grabbed
   let hover: Zone | null = null;     // what it is merely over, for the chrome and the cursor
@@ -715,19 +741,21 @@ export function createCompositor(): Compositor {
   canvas.style.touchAction = "none";
   canvas.addEventListener("pointerdown", (e) => {
     const p = toCanvas(e);
-    // The QR is drawn over the inset, so where they overlap it wins the pointer — grabbing
-    // what is visibly on top is the only behaviour that is not a surprise.
+    // Drawing order is camera, then message, then QR — so hit-testing runs in reverse and the
+    // topmost thing under the pointer wins. Grabbing what is visibly on top is the only
+    // behaviour that is not a surprise.
     const qz = qrZoneAt(p);
-    const z = qz ?? zoneAt(p);
+    const mz = qz ? null : msgZoneAt(p);
+    const z = qz ?? mz ?? zoneAt(p);
     if (!z) return;
-    target = qz ? "qr" : "cam";
+    target = qz ? "qr" : mz ? "msg" : "cam";
     mode = z;
     hover = z;
     hoverTarget = target;
-    const ox = target === "qr" ? qrX : px;
-    const oy = target === "qr" ? qrY : py;
-    const ow = target === "qr" ? qrPlate?.width ?? 0 : insetW();
-    const oh = target === "qr" ? qrPlate?.height ?? 0 : insetH();
+    const ox = target === "qr" ? qrX : target === "msg" ? msgX : px;
+    const oy = target === "qr" ? qrY : target === "msg" ? msgY : py;
+    const ow = target === "qr" ? qrPlate?.width ?? 0 : target === "msg" ? msgW : insetW();
+    const oh = target === "qr" ? qrPlate?.height ?? 0 : target === "msg" ? msgH() : insetH();
     if (z === "move") {
       dx = p.x - ox;
       dy = p.y - oy;
@@ -745,8 +773,9 @@ export function createCompositor(): Compositor {
     const p = toCanvas(e);
     if (!mode) {
       const qz = qrZoneAt(p);
-      hover = qz ?? zoneAt(p);
-      hoverTarget = hover ? (qz ? "qr" : "cam") : null;
+      const mz = qz ? null : msgZoneAt(p);
+      hover = qz ?? mz ?? zoneAt(p);
+      hoverTarget = hover ? (qz ? "qr" : mz ? "msg" : "cam") : null;
       canvas.style.cursor = hover ? CURSOR[hover] : "";
       return;
     }
@@ -776,6 +805,30 @@ export function createCompositor(): Compositor {
       }
       return;
     }
+    if (target === "msg") {
+      if (mode === "move") {
+        msgX = p.x - dx;
+        msgY = p.y - dy;
+        clampMsg();
+        return;
+      }
+      // Aspect locked to the clip's own shape: one axis drives, the other follows. A message
+      // is somebody's face, and stretching it is a worse outcome than a size that is slightly
+      // off. Unlike the QR there is nothing to quantise, so this slides smoothly.
+      const a = msgAspect();
+      const fromX = mode.includes("w") ? anchorX - p.x : p.x - anchorX;
+      const fromY = mode.includes("n") ? anchorY - p.y : p.y - anchorY;
+      let want: number;
+      if (mode === "n" || mode === "s") want = fromY * a;
+      else if (mode === "e" || mode === "w") want = fromX;
+      else want = Math.max(fromX, fromY * a);
+      msgW = Math.max(MSG_MIN_W, Math.min(want, CANVAS_W));
+      // Re-derive from the held anchor so the grabbed corner stays put as the box grows.
+      msgX = mode.includes("w") ? anchorX - msgW : anchorX;
+      msgY = mode.includes("n") ? anchorY - msgH() : anchorY;
+      clampMsg();
+      return;
+    }
     if (mode === "move") {
       px = p.x - dx;
       py = p.y - dy;
@@ -801,7 +854,9 @@ export function createCompositor(): Compositor {
     const p = toCanvas(e);
     const qz = qrZoneAt(p);
     hover = qz ?? zoneAt(p);
-    hoverTarget = hover ? (qz ? "qr" : "cam") : null;
+    const mz2 = qz ? null : msgZoneAt(p);
+    hover = qz ?? mz2 ?? hover;
+    hoverTarget = hover ? (qz ? "qr" : mz2 ? "msg" : "cam") : null;
     canvas.style.cursor = hover ? CURSOR[hover] : "";
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   };
@@ -826,6 +881,7 @@ export function createCompositor(): Compositor {
   type Chrome = { el: HTMLDivElement | null; key: string };
   const camChrome: Chrome = { el: null, key: "" };
   const qrChrome: Chrome = { el: null, key: "" };
+  const msgChrome: Chrome = { el: null, key: "" };
 
   const ensureChrome = (c: Chrome): HTMLDivElement | null => {
     if (c.el) return c.el;
@@ -883,6 +939,7 @@ export function createCompositor(): Compositor {
     const active = mode !== null ? target : hoverTarget;
     syncOne(camChrome, !!(screen && camera) && active === "cam", px, py, insetW(), insetH());
     syncOne(qrChrome, !!qrPlate && active === "qr", qrX, qrY, qrPlate?.width ?? 0, qrPlate?.height ?? 0);
+    syncOne(msgChrome, !!messageVideo && msgPlaced && active === "msg", msgX, msgY, msgW, msgH());
   };
 
   // ---- Audio mix: one stable output track; mic + system audio are inputs ----

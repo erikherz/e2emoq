@@ -53,6 +53,12 @@ export interface RecordedMessage {
  * is the single biggest change in what a viewer exposes.
  */
 export async function recordMessage(opts: {
+  /**
+   * The live camera stream, handed over the moment it opens so the caller can show a
+   * self-view. Recording yourself with no picture is recording blind: you cannot tell if you
+   * are in frame, lit, or even pointed at the right camera until it is too late to matter.
+   */
+  onStream?: (stream: MediaStream) => void;
   onTick?: (msElapsed: number) => void;
   signal?: AbortSignal;
 }): Promise<RecordedMessage> {
@@ -63,6 +69,7 @@ export async function recordMessage(opts: {
     audio: true,
   });
 
+  opts.onStream?.(stream);
   const stop = () => stream.getTracks().forEach((t) => t.stop());
 
   // Chrome/Firefox produce WebM; Safari produces MP4. Ask for what the browser actually

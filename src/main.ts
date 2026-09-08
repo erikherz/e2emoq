@@ -3608,6 +3608,7 @@ async function initWatchView(streamId: string, user: User | null) {
         if (taken) URL.revokeObjectURL(taken.previewUrl);
         taken = null;
         abort = null;
+        preview.srcObject = null;
         preview.removeAttribute("src");
         preview.load();
         timer.textContent = "";
@@ -3638,12 +3639,24 @@ async function initWatchView(streamId: string, user: User | null) {
         try {
           const out = await msg.recordMessage({
             signal: abort.signal,
+            // Live self-view while recording. srcObject rather than src: this is a stream,
+            // not a file, and the element is mirrored in CSS so it behaves like a mirror
+            // rather than like footage of someone else.
+            onStream: (live) => {
+              preview.srcObject = live;
+              preview.muted = true;
+              void preview.play().catch(() => {});
+            },
             onTick: (ms) => {
               timer.textContent = msg.formatMs(ms);
             },
           });
           taken = out;
           abort = null;
+          // Hand the element back from the live stream to the recorded file, or it keeps
+          // showing a camera that has already been stopped — a frozen last frame that looks
+          // like the recording failed.
+          preview.srcObject = null;
           // Show it back before anything leaves the device. Sending video of your own face is
           // the one action here a viewer should never take without seeing it first.
           preview.src = out.previewUrl;
