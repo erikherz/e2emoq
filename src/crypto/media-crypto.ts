@@ -546,6 +546,56 @@ export async function deriveRouteTag(secretB64url: string, streamId: string): Pr
     .replace(/=+$/, "");
 }
 
+/**
+ * The key for a viewer's video message.
+ *
+ * Its own HKDF context, so a message is cryptographically independent of the media and of the
+ * chat — but derived from the SAME link, which is what makes the whole feature work with no
+ * new key exchange. Everyone holding the link can seal a message and open one; nobody else can
+ * do either, including us.
+ *
+ * The passcode is mixed in when one is armed, so on a protected broadcast a message is
+ * protected too. The salt is included for the same reason it is on media: rotating it — which
+ * is how a broadcast gets terminated — must invalidate messages along with everything else.
+ */
+export async function deriveMessageKey(
+  secretB64url: string,
+  opts: DeriveOpts
+): Promise<CryptoKey> {
+  return deriveFor(secretB64url, opts, "e2emoq-message-key-v1");
+}
+
+/**
+ * Seal arbitrary bytes to `[12-byte nonce][AES-GCM ciphertext+tag]`.
+ *
+ * Deliberately NOT {@link sealText}: that base64s its output, which costs 33% on a payload
+ * measured in megabytes. Video messages are the only thing here big enough for that to matter,
+ * so they get a binary envelope instead.
+ */
+export async function sealBytes(k: CryptoKey, plain: Uint8Array): Promise<Uint8Array> {
+  const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: ALGO, iv: nonce }, k, plain));
+  const out = new Uint8Array(NONCE_BYTES + ct.byteLength);
+  out.set(nonce, 0);
+  out.set(ct, NONCE_BYTES);
+  return out;
+}
+
+/** Reverse of {@link sealBytes}. Null on any failure — a wrong key must not throw. */
+export async function openBytes(k: CryptoKey, sealed: Uint8Array): Promise<Uint8Array | null> {
+  try {
+    if (sealed.byteLength <= NONCE_BYTES) return null;
+    const pt = await crypto.subtle.decrypt(
+      { name: ALGO, iv: sealed.subarray(0, NONCE_BYTES) },
+      k,
+      sealed.subarray(NONCE_BYTES)
+    );
+    return new Uint8Array(pt);
+  } catch {
+    return null;
+  }
+}
+
 /** Encrypt a UTF-8 string to `<b64url nonce>.<b64url ciphertext>`. */
 export async function sealText(k: CryptoKey, plaintext: string): Promise<string> {
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));

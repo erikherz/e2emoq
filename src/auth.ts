@@ -368,6 +368,8 @@ export interface StreamSettings {
   link_enc: string;
   encrypted: boolean;
   chat_enabled: boolean;
+  /** The broadcaster accepts video messages from viewers. OFF unless explicitly enabled. */
+  messages_enabled: boolean;
   /** Terminated by an operator. Both sides poll for this and stop; see stopForKill(). */
   killed: boolean;
 }
@@ -382,13 +384,14 @@ export async function getStreamSettings(streamId: string): Promise<StreamSetting
       link_enc: data.link_enc ?? "",
       encrypted: data.encrypted ?? false,
       chat_enabled: data.chat_enabled ?? false,
+      messages_enabled: data.messages_enabled ?? false,
       killed: data.killed ?? false,
     };
   } catch {
     // Fails to `killed: false` deliberately. A network blip must not black out a stream that
     // is running perfectly well — the real signal is an explicit `true` from the server, and
     // a poll that fails will simply be retried five seconds later.
-    return { require_auth: false, overlay_html: "", link_enc: "", encrypted: false, chat_enabled: false, killed: false };
+    return { require_auth: false, overlay_html: "", link_enc: "", encrypted: false, chat_enabled: false, messages_enabled: false, killed: false };
   }
 }
 

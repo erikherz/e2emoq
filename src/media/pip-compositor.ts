@@ -168,6 +168,18 @@ export interface Compositor {
    */
   setStampProvider: (fn: ((frame: StampFrameInfo) => string) | null) => void;
   /**
+   * Put a viewer's video message on screen, or null to take it down.
+   *
+   * The element must already be playing; the compositor only draws it. Drawn LAST and largest,
+   * over the camera inset, because a message is a deliberate act of showing something and
+   * should not be the smallest thing in frame.
+   *
+   * There is no separate "send to viewers" step, and that is the point: the message is drawn
+   * into the composite, so it is inside the encoded, encrypted frames every viewer already
+   * receives. No new delivery path and no new key.
+   */
+  setMessageVideo: (video: HTMLVideoElement | null) => void;
+  /**
    * A broadcaster's handle, drawn as a subtle watermark in the upper left, or null for none.
    * Static text, unlike the burn-in, so it is set rather than polled per frame.
    */
@@ -195,6 +207,9 @@ function mkVideo(stream: MediaStream): HTMLVideoElement {
 }
 
 export function createCompositor(): Compositor {
+  // The message currently on screen, if any. Held as a plain element rather than a track so
+  // the caller keeps control of playback — pausing, replaying, and taking it down are theirs.
+  let messageVideo: HTMLVideoElement | null = null;
   const canvas = document.createElement("canvas");
   canvas.width = CANVAS_W;
   canvas.height = CANVAS_H;
@@ -578,12 +593,58 @@ export function createCompositor(): Compositor {
     // over a screen share: the camera is the source that witnesses the physical world, which
     // is what a provenance stamp is about. Screen-only stamps the screen grab. Neither
     // present (audio-only, or before the first frame) falls through to "draw".
+    drawMessage();
     drawWatermark();
     drawLinkQr();
     drawStamp((camera ? cameraFrame : screen ? screenFrame : null) ?? NO_FRAME_TIMING);
     // Keep the DOM chrome on top of the inset it describes. Defined below; by the time any
     // rAF callback runs, the whole factory body has finished executing.
     syncChrome();
+  };
+
+  /**
+   * The message inset: 44% of frame width, lower left, so it does not collide with the camera
+   * inset's default lower-right corner. Letterboxed inside its box rather than cropped — a
+   * message is somebody's face and cropping it to fill would cut their head off.
+   */
+  const drawMessage = () => {
+    const v = messageVideo;
+    if (!v || !v.videoWidth || !v.videoHeight) return;
+    const boxW = Math.round(CANVAS_W * 0.44);
+    const boxH = Math.round(boxW * (9 / 16));
+    const x = 24;
+    const y = CANVAS_H - boxH - 24;
+
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(x, y, boxW, boxH);
+    ctx.restore();
+
+    const scale = Math.min(boxW / v.videoWidth, boxH / v.videoHeight);
+    const w = v.videoWidth * scale;
+    const h = v.videoHeight * scale;
+    try {
+      ctx.drawImage(v, x + (boxW - w) / 2, y + (boxH - h) / 2, w, h);
+    } catch {
+      return; // a frame that is not ready yet; the next tick will have one
+    }
+
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, boxW, boxH);
+
+    // Label it. A viewer seeing a stranger's face in the corner of a broadcast should not have
+    // to guess whether it is a second host, a guest, or something the broadcaster chose to
+    // replay — say so in the picture, where it cannot be separated from the thing it labels.
+    const label = "Message from a viewer";
+    ctx.font = "600 15px system-ui, -apple-system, sans-serif";
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = "rgba(0,0,0,0.72)";
+    ctx.fillRect(x, y - 26, tw + 20, 26);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, x + 10, y - 8);
   };
 
   const stopLoop = () => {
@@ -853,6 +914,9 @@ export function createCompositor(): Compositor {
 
   return {
     videoTrack,
+    setMessageVideo: (v: HTMLVideoElement | null) => {
+      messageVideo = v;
+    },
     audioTrack,
     canvas,
     hasCamera: () => !!camera,

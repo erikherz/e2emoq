@@ -61,6 +61,30 @@ Implementation is `src/recording.ts` plus a tap on the existing decrypt seam. Th
 documented at the top of that file: magic, a **sealed** header (the decoder config, so a
 recording does not disclose even its own resolution), then length-prefixed frames.
 
+### Video messages from viewers
+
+A broadcaster can switch on **Accept video messages**. A viewer then records up to ten seconds
+of themselves, previews it, and sends. The broadcaster sees it in an inbox, and can put it on
+screen as a picture-in-picture inset.
+
+Two design notes, because both were tempting to get wrong:
+
+**Showing a message needed no delivery mechanism.** The broadcaster composites it into the
+canvas — and the canvas is what gets encoded, encrypted and published. So a shown message
+reaches every viewer inside the frames they are already receiving. No fan-out, no second
+channel, no new key. The same trick the QR watermark uses.
+
+**Nothing here holds a key.** The clip is sealed in the sender's browser under
+`deriveMessageKey` (its own HKDF context, derived from the same link), uploaded as opaque
+bytes, and stored as a D1 blob. Authorisation is the route tag, also derived from the link — so
+everyone who can watch can send, nobody else can do either, and it is a bearer proof rather
+than an identity. **We do not learn which viewer sent a message, and must not.**
+
+Off by default, and that is a safety decision rather than a UX one: accepting video from anyone
+holding a link makes the broadcaster's inbox a surface strangers can put things on, and this
+product has no report path. Messages are capped at 10s / 1 MB, deleted when the broadcast ends,
+and swept hourly.
+
 ### What it cannot do
 
 Stated here rather than discovered later:
@@ -273,6 +297,10 @@ node scripts/e2e/publish-code-fallback.mjs https://your-domain
 
 # Text contrast, measured on the rendered page rather than trusted from the palette.
 node scripts/e2e/contrast.mjs https://your-domain
+
+# Video messages: hidden until opt-in, a viewer can send, the broadcaster can composite it,
+# and a wrong route tag is refused for both submit and read.
+node scripts/e2e/messages.mjs https://your-domain
 
 # Recording: a file is produced, it carries no plaintext config, the right link opens it —
 # and, the assertion that matters, a DIFFERENT link does not.

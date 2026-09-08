@@ -1862,6 +1862,24 @@
         .replay-panel { margin-top: 10px; }
         .replay-panel canvas { width: 100%; display: block; background: #000; border-radius: 4px; }
         .replay-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+
+        /* ── Video messages ──────────────────────────────────────────────── */
+        .msg-inbox { margin-top: 10px; border: 1px solid var(--border, #2a3439); border-radius: 4px; padding: 10px 12px; }
+        .msg-inbox-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .msg-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
+        .msg-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+        .msg-list:empty { display: none; }
+        .msg-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 6px 0; border-top: 1px solid var(--border, #2a3439); }
+        .msg-row .rec-spacer { flex: 1 1 auto; }
+        .msg-row.shown { opacity: .55; }
+        .msg-stage { width: 100%; max-width: 420px; margin-top: 10px; display: block; background: #000; border-radius: 4px; }
+
+        .msg-compose { margin-top: 10px; max-width: 480px; }
+        .msg-preview { width: 100%; background: #000; border-radius: 4px; display: block; transform: scaleX(-1); }
+        .msg-compose-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+        /* The consent line is not fine print: it states who ends up seeing this, which is the
+           one thing a viewer cannot infer from a Record button. */
+        .msg-consent { font-size: 12.5px; color: var(--text-secondary); margin: 8px 0 0; line-height: 1.45; }
 </style>
 </head>
 <body>
@@ -2075,6 +2093,22 @@
                     <moq-publish announce="source">
                         <video muted autoplay playsinline></video>
                     </moq-publish>
+                    <!-- Video messages from viewers. OFF until the broadcaster turns it on:
+                         accepting video from anyone holding the link makes this an
+                         unsolicited-content surface, and there is no report path here. -->
+                    <div id="msg-inbox" class="msg-inbox hidden">
+                        <div class="msg-inbox-head">
+                            <label class="msg-toggle">
+                                <input type="checkbox" id="msg-enable">
+                                <span>Accept video messages</span>
+                            </label>
+                            <span id="msg-count" class="rec-status"></span>
+                            <span class="rec-spacer"></span>
+                            <button id="msg-clear" class="btn btn-quiet" type="button">Take down</button>
+                        </div>
+                        <ul id="msg-list" class="msg-list"></ul>
+                        <video id="msg-stage" class="msg-stage hidden" playsinline></video>
+                    </div>
                 </section>
                 <div id="broadcast-chat" class="chat-panel hidden"></div>
             </div>
@@ -2098,6 +2132,26 @@
                         <span class="rec-spacer"></span>
                         <label class="btn btn-quiet" for="rec-open">Open a recording</label>
                         <input type="file" id="rec-open" accept=".e2emoq,application/octet-stream" hidden>
+                        <button id="msg-send-btn" class="btn btn-quiet hidden" type="button">Send a message</button>
+                    </div>
+                    <!-- Recording your own camera is a bigger step than anything else a viewer
+                         does here, so it gets a preview and an explicit agreement rather than
+                         a one-click send. -->
+                    <div id="msg-compose" class="msg-compose hidden">
+                        <video id="msg-preview" class="msg-preview" muted playsinline></video>
+                        <div class="msg-compose-bar">
+                            <button id="msg-record" class="btn btn-rec" type="button">
+                                <span class="rec-dot" aria-hidden="true"></span>Record
+                            </button>
+                            <span id="msg-timer" class="rec-status"></span>
+                            <span class="rec-spacer"></span>
+                            <button id="msg-cancel" class="btn btn-quiet" type="button">Cancel</button>
+                            <button id="msg-submit" class="btn btn-primary" type="button" disabled>Send</button>
+                        </div>
+                        <p id="msg-consent" class="msg-consent">
+                            The broadcaster can put this on screen for everyone watching. Only
+                            people holding this link can open it — we cannot.
+                        </p>
                     </div>
                     <div id="replay-panel" class="replay-panel hidden">
                         <canvas id="replay-canvas"></canvas>

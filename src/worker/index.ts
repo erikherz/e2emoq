@@ -243,8 +243,30 @@ export default {
     if (closed || purged) console.log(`[reaper] closed=${closed} purged=${purged}`);
     const broadcasts = await reapBroadcasts(env);
     if (broadcasts) console.log(`[reaper] broadcasts closed=${broadcasts}`);
+    const messages = await reapMessages(env);
+    if (messages) console.log(`[reaper] messages deleted=${messages}`);
   },
 };
+
+/**
+ * Delete video messages whose broadcast is no longer live.
+ *
+ * The end beacon already clears them, so this only catches what a closed laptop or a dropped
+ * network left behind — the same gap reapBroadcasts exists for. Belt and braces on purpose:
+ * the one thing in this database that could embarrass someone is a face, and the cost of an
+ * extra DELETE every hour is nothing against the cost of one being kept.
+ */
+async function reapMessages(env: Env): Promise<number> {
+  const res = await env.DB
+    .prepare(`
+      DELETE FROM stream_messages
+      WHERE stream_id NOT IN (
+        SELECT stream_id FROM broadcast_events WHERE ended_at IS NULL
+      )
+    `)
+    .run();
+  return res.meta.changes ?? 0;
+}
 
 async function handleApiRoutes(
   request: Request,
@@ -616,6 +638,124 @@ async function handleStreamRoutes(
   const method = request.method;
   const path = url.pathname;
 
+  // ── Video messages ─────────────────────────────────────────────────────────────────────
+  //
+  // A viewer records a short clip; the broadcaster may put it on screen. Everything here moves
+  // CIPHERTEXT: the client seals under a key derived from the share-link fragment
+  // (deriveMessageKey), so this Worker stores and serves bytes it cannot read, exactly as it
+  // does for link_enc and for the media itself.
+  //
+  // Authorisation is the route tag, which is derived from the same link secret. That gives the
+  // right property without an account: everyone who can watch can send, and nobody else can do
+  // either. It is a bearer proof and deliberately not an identity — we do not know, and must
+  // not learn, WHICH viewer sent a message.
+  const streamMessagesMatch = path.match(/^\/api\/streams\/([a-z0-9]{5})\/messages$/);
+  const streamMessageOneMatch = path.match(/^\/api\/streams\/([a-z0-9]{5})\/messages\/(\d+)$/);
+
+  if (streamMessagesMatch || streamMessageOneMatch) {
+    const streamId = (streamMessagesMatch ?? streamMessageOneMatch)![1];
+
+    // Fail CLOSED, unlike the viewers endpoint. That one has to render a 0 badge before a
+    // broadcast registers a tag; this one has nothing to show before then, so an untagged
+    // stream should accept and return nothing rather than defaulting open.
+    const live = await env.DB
+      .prepare(
+        "SELECT route_tag FROM broadcast_events WHERE stream_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1"
+      )
+      .bind(streamId)
+      .first<{ route_tag: string | null }>();
+    const presented = url.searchParams.get("tag") ?? "";
+    if (!live?.route_tag || !constantTimeEqual(presented, live.route_tag)) {
+      // Same answer a stranger gets for a stream that does not exist. Distinguishing "wrong
+      // tag" from "no such stream" would confirm a guessed id.
+      return Response.json({ error: "not found" }, { status: 404 });
+    }
+
+    // ---- submit ----------------------------------------------------------------------
+    if (method === "POST" && streamMessagesMatch) {
+      const settings = await env.DB
+        .prepare("SELECT messages_enabled FROM streams WHERE stream_id = ?")
+        .bind(streamId)
+        .first<{ messages_enabled: number | null }>();
+      if (!settings?.messages_enabled) {
+        return Response.json({ error: "messages are not enabled on this broadcast" }, { status: 403 });
+      }
+
+      const body = await request.arrayBuffer();
+      // 1 MB: D1 rejects an oversized row with an error the client cannot act on, so the
+      // refusal has to happen here, and it has to say what to do about it.
+      if (body.byteLength === 0 || body.byteLength > 1_000_000) {
+        return Response.json(
+          { error: "a message must be between 1 byte and 1 MB — record a shorter one" },
+          { status: 413 }
+        );
+      }
+      // Cheap flood guard. Not identity-based (we have none), so it caps the BROADCAST rather
+      // than the sender: an inbox nobody can clear is its own denial of service.
+      const count = await env.DB
+        .prepare("SELECT COUNT(*) AS n FROM stream_messages WHERE stream_id = ?")
+        .bind(streamId)
+        .first<{ n: number }>();
+      if ((count?.n ?? 0) >= 30) {
+        return Response.json({ error: "this broadcast's message queue is full" }, { status: 429 });
+      }
+
+      const mime = (request.headers.get("content-type") || "video/webm").slice(0, 64);
+      const res = await env.DB
+        .prepare("INSERT INTO stream_messages (stream_id, sealed, bytes, mime) VALUES (?, ?, ?, ?)")
+        .bind(streamId, [...new Uint8Array(body)], body.byteLength, mime)
+        .run();
+      return Response.json({ ok: true, id: res.meta.last_row_id }, { status: 201 });
+    }
+
+    // ---- list (metadata only; the blobs are fetched one at a time) ---------------------
+    if (method === "GET" && streamMessagesMatch) {
+      const rows = await env.DB
+        .prepare(
+          "SELECT id, bytes, mime, created_at, shown_at FROM stream_messages WHERE stream_id = ? ORDER BY id ASC"
+        )
+        .bind(streamId)
+        .all();
+      return Response.json({ stream_id: streamId, messages: rows.results ?? [] });
+    }
+
+    // ---- fetch one sealed blob ---------------------------------------------------------
+    if (method === "GET" && streamMessageOneMatch) {
+      const row = await env.DB
+        .prepare("SELECT sealed, mime FROM stream_messages WHERE id = ? AND stream_id = ?")
+        .bind(Number(streamMessageOneMatch[2]), streamId)
+        .first<{ sealed: ArrayBuffer | number[]; mime: string }>();
+      if (!row) return Response.json({ error: "not found" }, { status: 404 });
+      const bytes = row.sealed instanceof ArrayBuffer ? row.sealed : new Uint8Array(row.sealed);
+      return new Response(bytes, {
+        headers: {
+          "content-type": "application/octet-stream",
+          "cache-control": "no-store",
+          "x-message-mime": row.mime,
+        },
+      });
+    }
+
+    // ---- mark shown, or delete ---------------------------------------------------------
+    if (method === "POST" && streamMessageOneMatch) {
+      await env.DB
+        .prepare("UPDATE stream_messages SET shown_at = datetime('now') WHERE id = ? AND stream_id = ?")
+        .bind(Number(streamMessageOneMatch[2]), streamId)
+        .run();
+      return Response.json({ ok: true });
+    }
+    if (method === "DELETE" && streamMessageOneMatch) {
+      await env.DB
+        .prepare("DELETE FROM stream_messages WHERE id = ? AND stream_id = ?")
+        .bind(Number(streamMessageOneMatch[2]), streamId)
+        .run();
+      return Response.json({ ok: true });
+    }
+
+    return Response.json({ error: "method not allowed" }, { status: 405 });
+  }
+
+
   // GET /api/streams/:stream_id/chat - Live chat WebSocket (forwarded to the per-stream
   // Durable Object). Only for chat-enabled streams; everyone (broadcaster + viewers) can
   // connect. WS handshakes are GET requests.
@@ -656,7 +796,7 @@ async function handleStreamRoutes(
     // with settings but no salt row, or a salt row with no settings, must both be answerable.
     const stream = await env.DB
       .prepare(`
-        SELECT s.require_auth, s.overlay_html, s.link_enc, s.encrypted, s.chat_enabled, k.killed_at
+        SELECT s.require_auth, s.overlay_html, s.link_enc, s.encrypted, s.chat_enabled, s.messages_enabled, k.killed_at
         FROM (SELECT ? AS sid) q
         LEFT JOIN streams s ON s.stream_id = q.sid
         LEFT JOIN stream_salts k ON k.stream_id = q.sid
@@ -668,6 +808,7 @@ async function handleStreamRoutes(
         link_enc: string | null;
         encrypted: number | null;
         chat_enabled: number | null;
+        messages_enabled: number | null;
         killed_at: string | null;
       }>();
 
@@ -681,6 +822,7 @@ async function handleStreamRoutes(
       link_enc: stream?.link_enc || "",
       encrypted: true, // mandatory for every stream; the column is retained but no longer authoritative
       chat_enabled: stream?.chat_enabled === 1,
+      messages_enabled: stream?.messages_enabled === 1,
       killed: !!stream?.killed_at,
     });
   }
@@ -997,6 +1139,7 @@ async function handleStreamRoutes(
       link_enc?: string;
       encrypted?: boolean;
       chat_enabled?: boolean;
+      messages_enabled?: boolean;
       publish_key?: string;
       pubkey?: string;
       challenge?: string;
@@ -1042,14 +1185,18 @@ async function handleStreamRoutes(
 
     // Get current settings first
     const current = await env.DB
-      .prepare("SELECT require_auth, overlay_html, link_enc, encrypted, chat_enabled FROM streams WHERE stream_id = ?")
+      .prepare("SELECT require_auth, overlay_html, link_enc, encrypted, chat_enabled, messages_enabled FROM streams WHERE stream_id = ?")
       .bind(body.stream_id)
-      .first<{ require_auth: number; overlay_html: string | null; link_enc: string | null; encrypted: number; chat_enabled: number }>();
+      .first<{ require_auth: number; overlay_html: string | null; link_enc: string | null; encrypted: number; chat_enabled: number; messages_enabled: number }>();
 
     const requireAuth = body.require_auth !== undefined ? body.require_auth : (current?.require_auth === 1);
     const overlayHtml = body.overlay_html !== undefined ? body.overlay_html : (current?.overlay_html || "");
     const isEncrypted = body.encrypted !== undefined ? body.encrypted : (current?.encrypted === 1);
     const chatEnabled = body.chat_enabled !== undefined ? body.chat_enabled : (current?.chat_enabled === 1);
+    // Defaults OFF and stays off unless asked: accepting video from any link holder makes the
+    // broadcaster's inbox an unsolicited-content surface, and this product has no report path.
+    const messagesEnabled =
+      body.messages_enabled !== undefined ? body.messages_enabled : current?.messages_enabled === 1;
 
     // Opaque to us by design (see the 0017 migration), which means it cannot be validated on
     // content — a length bound is the only check available, and it is the one that matters:
@@ -1063,21 +1210,23 @@ async function handleStreamRoutes(
     // Upsert stream settings
     await env.DB
       .prepare(`
-        INSERT INTO streams (stream_id, user_id, require_auth, overlay_html, link_enc, encrypted, chat_enabled)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO streams (stream_id, user_id, require_auth, overlay_html, link_enc, encrypted, chat_enabled, messages_enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(stream_id) DO UPDATE SET
           require_auth = excluded.require_auth,
           overlay_html = excluded.overlay_html,
           link_enc = excluded.link_enc,
           encrypted = excluded.encrypted,
           chat_enabled = excluded.chat_enabled,
+          messages_enabled = excluded.messages_enabled,
           updated_at = datetime('now')
       `)
-      .bind(body.stream_id, user.id, requireAuth ? 1 : 0, overlayHtml, linkEnc, isEncrypted ? 1 : 0, chatEnabled ? 1 : 0)
+      .bind(body.stream_id, user.id, requireAuth ? 1 : 0, overlayHtml, linkEnc, isEncrypted ? 1 : 0, chatEnabled ? 1 : 0, messagesEnabled ? 1 : 0)
       .run();
 
     return Response.json({
       stream_id: body.stream_id,
+      messages_enabled: messagesEnabled,
       require_auth: requireAuth,
       overlay_html: overlayHtml,
       link_enc: linkEnc,
@@ -1966,6 +2115,14 @@ async function handleStatsRoutes(
 
     if (row?.stream_id) {
       await releaseRelay(env, row.stream_id, row.relay_host, env.TINYMOQ_PROVISION_KEY);
+      // Video messages die with the broadcast they were sent to. A stranger's face has no
+      // business outliving the stream it was recorded for, and the broadcaster cannot show it
+      // any more anyway.
+      const gone = await env.DB
+        .prepare("DELETE FROM stream_messages WHERE stream_id = ?")
+        .bind(row.stream_id)
+        .run();
+      if (gone.meta.changes) console.log(`[messages] ${gone.meta.changes} deleted with ${row.stream_id}`);
     }
 
     return Response.json({ success: true });

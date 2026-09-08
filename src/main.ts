@@ -818,6 +818,7 @@ import {
   openText,
 } from "./crypto/media-crypto";
 import * as rec from "./recording";
+import * as msg from "./messages";
 import { initChat, type ChatHandle } from "./chat/chat-client";
 import { describeLocation } from "./geo/nearest-city";
 import { createCompositor, type CameraFacing, type Compositor } from "./media/pip-compositor";
@@ -1996,6 +1997,111 @@ function initBroadcastView(initialStreamId: string, user: User | null) {
     // the publish path never switches the element's source mode mid-broadcast — that switch
     // silently dropped audio when the sequence was audio-first-then-video.
     let comp: Compositor | null = null;
+
+    // ---- viewer messages: accept, preview, put on screen -------------------------------
+    // "Show" does not send anything anywhere. It hands the element to the compositor, which
+    // draws it into the canvas that is already being encoded and encrypted — so the message
+    // reaches viewers inside the frames they are receiving anyway. See setMessageVideo.
+    (function mountInbox() {
+      const box = document.getElementById("msg-inbox");
+      const enable = document.getElementById("msg-enable") as HTMLInputElement | null;
+      const list = document.getElementById("msg-list");
+      const count = document.getElementById("msg-count");
+      const stage = document.getElementById("msg-stage") as HTMLVideoElement | null;
+      const clear = document.getElementById("msg-clear") as HTMLButtonElement | null;
+      if (!box || !enable || !list || !count || !stage || !clear) return;
+      box.classList.remove("hidden");
+
+      let tag = "";
+      let poll: number | undefined;
+      const derive = () => ({ streamId, salt: activeSalt, passcode: activePasscode() });
+
+      const takeDown = () => {
+        comp?.setMessageVideo(null);
+        stage.classList.add("hidden");
+        stage.pause();
+        if (stage.src) URL.revokeObjectURL(stage.src);
+        stage.removeAttribute("src");
+      };
+      clear.addEventListener("click", takeDown);
+
+      const render = (items: msg.MessageMeta[]) => {
+        count.textContent = items.length ? `${items.length} waiting` : "";
+        list.replaceChildren();
+        for (const m of items) {
+          const li = document.createElement("li");
+          li.className = m.shown_at ? "msg-row shown" : "msg-row";
+          const when = document.createElement("span");
+          when.textContent = `${(m.bytes / 1024).toFixed(0)} KB${m.shown_at ? " · shown" : ""}`;
+          const spacer = document.createElement("span");
+          spacer.className = "rec-spacer";
+          const show = document.createElement("button");
+          show.type = "button";
+          show.className = "btn btn-quiet";
+          show.textContent = "Show";
+          show.addEventListener("click", async () => {
+            show.disabled = true;
+            const blob = await msg.openMessage(streamId, tag, linkSecret, derive(), m.id, m.mime);
+            show.disabled = false;
+            if (!blob) {
+              when.textContent = "could not open";
+              return;
+            }
+            takeDown();
+            stage.src = URL.createObjectURL(blob);
+            stage.classList.remove("hidden");
+            stage.muted = false;
+            await stage.play().catch(() => {});
+            comp?.setMessageVideo(stage);
+            // Take it down by itself; a message left frozen on the last frame reads as a
+            // broken stream rather than a finished message.
+            stage.onended = takeDown;
+            void msg.markShown(streamId, tag, m.id);
+          });
+          const drop = document.createElement("button");
+          drop.type = "button";
+          drop.className = "btn btn-quiet";
+          drop.textContent = "Dismiss";
+          drop.addEventListener("click", async () => {
+            await msg.deleteMessage(streamId, tag, m.id);
+            li.remove();
+          });
+          li.append(when, spacer, show, drop);
+          list.appendChild(li);
+        }
+      };
+
+      const refresh = async () => {
+        if (!tag || !enable.checked) return;
+        render(await msg.listMessages(streamId, tag));
+      };
+
+      enable.addEventListener("change", async () => {
+        // updateStreamSettings RETURNS whether it saved, and the first version of this ignored
+        // it — so a failed write left the box ticked and the broadcaster believing they were
+        // accepting messages while every viewer's send button stayed hidden. A control that
+        // shows a state the server does not hold is worse than one that refuses.
+        const saved = await updateStreamSettings(streamId, { messages_enabled: enable.checked });
+        if (!saved) {
+          enable.checked = !enable.checked;
+          count.textContent = "Could not change that setting.";
+          return;
+        }
+        count.textContent = "";
+        if (enable.checked) {
+          tag = await deriveRouteTag(linkSecret, streamId);
+          void refresh();
+          // 2.5s, not 5: a broadcaster who has just been told a message arrived should not
+          // wait half a beat wondering whether it did. The request is a metadata list.
+          poll = window.setInterval(refresh, 2500);
+        } else {
+          window.clearInterval(poll);
+          takeDown();
+          list.replaceChildren();
+          count.textContent = "";
+        }
+      });
+    })();
     // Filled in when the control bar is built, further down. A mutable hook rather than a
     // direct call because applyState is DEFINED above that code and would otherwise read a
     // `const` from its temporal dead zone the first time a button was clicked.
@@ -3378,6 +3484,105 @@ async function initWatchView(streamId: string, user: User | null) {
       ticker = window.setInterval(paint, 500);
     });
 
+    // ---- send a video message ----------------------------------------------------------
+    // The button only appears when the broadcaster has opted in, which /route reports.
+    const sendBtn = document.getElementById("msg-send-btn") as HTMLButtonElement | null;
+    const compose = document.getElementById("msg-compose");
+    const preview = document.getElementById("msg-preview") as HTMLVideoElement | null;
+    const recBtn = document.getElementById("msg-record") as HTMLButtonElement | null;
+    const timer = document.getElementById("msg-timer");
+    const cancelBtn = document.getElementById("msg-cancel") as HTMLButtonElement | null;
+    const submitBtn = document.getElementById("msg-submit") as HTMLButtonElement | null;
+
+    if (sendBtn && compose && preview && recBtn && timer && cancelBtn && submitBtn) {
+      let taken: msg.RecordedMessage | null = null;
+      let abort: AbortController | null = null;
+
+      const reset = () => {
+        if (taken) URL.revokeObjectURL(taken.previewUrl);
+        taken = null;
+        abort = null;
+        preview.removeAttribute("src");
+        preview.load();
+        timer.textContent = "";
+        submitBtn.disabled = true;
+        recBtn.classList.remove("recording");
+        recBtn.lastChild!.textContent = "Record";
+      };
+
+      sendBtn.addEventListener("click", () => {
+        compose.classList.toggle("hidden");
+        if (compose.classList.contains("hidden")) reset();
+      });
+      cancelBtn.addEventListener("click", () => {
+        abort?.abort();
+        reset();
+        compose.classList.add("hidden");
+      });
+
+      recBtn.addEventListener("click", async () => {
+        if (abort) {
+          abort.abort(); // second click stops early; the 10s cap stops it regardless
+          return;
+        }
+        reset();
+        abort = new AbortController();
+        recBtn.classList.add("recording");
+        recBtn.lastChild!.textContent = "Stop";
+        try {
+          const out = await msg.recordMessage({
+            signal: abort.signal,
+            onTick: (ms) => {
+              timer.textContent = msg.formatMs(ms);
+            },
+          });
+          taken = out;
+          abort = null;
+          // Show it back before anything leaves the device. Sending video of your own face is
+          // the one action here a viewer should never take without seeing it first.
+          preview.src = out.previewUrl;
+          preview.muted = true;
+          preview.loop = true;
+          void preview.play().catch(() => {});
+          timer.textContent = msg.formatMs(out.durationMs);
+          submitBtn.disabled = false;
+        } catch (e) {
+          abort = null;
+          timer.textContent =
+            (e as Error)?.name === "NotAllowedError"
+              ? "Camera and microphone access is needed to record a message."
+              : "Could not record. Check the camera is not in use elsewhere.";
+        }
+        recBtn.classList.remove("recording");
+        recBtn.lastChild!.textContent = "Record";
+      });
+
+      submitBtn.addEventListener("click", async () => {
+        if (!taken) return;
+        submitBtn.disabled = true;
+        timer.textContent = "Sending…";
+        try {
+          // Derive the tag here rather than reaching for the one the route code computed:
+          // that lives in a different function and this closure cannot see it. Same secret,
+          // same derivation, no shared state to get wrong.
+          const tag = await deriveRouteTag(watchLinkSecret, streamId);
+          await msg.submitMessage(
+            streamId,
+            tag,
+            watchLinkSecret,
+            { streamId, salt: watchSalt, passcode: watchPasscode },
+            taken.blob
+          );
+          reset();
+          compose.classList.add("hidden");
+          status.textContent = "Message sent. The broadcaster decides whether to show it.";
+        } catch (e) {
+          timer.textContent = (e as Error).message;
+          submitBtn.disabled = false;
+        }
+      });
+    }
+
     let playing: { stop(): void } | null = null;
     const closeReplay = () => {
       playing?.stop();
@@ -3477,6 +3682,12 @@ async function initWatchView(streamId: string, user: User | null) {
     watchChatPanel?.classList.add("hidden");
   };
   if (settings.chat_enabled) openWatchChat();
+  // The send button follows the broadcaster's opt-in, which rides on the stream SETTINGS
+  // rather than on /route — getStreamRoute maps its response field by field and would drop
+  // anything new, so a flag added there arrives nowhere.
+  if (settings.messages_enabled) {
+    document.getElementById("msg-send-btn")?.classList.remove("hidden");
+  }
 
   // Set stream name on watcher (headless <moq-watch> core element)
   const watcher = document.querySelector("moq-watch") as MoqWatchElement | null;
