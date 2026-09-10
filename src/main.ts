@@ -4635,6 +4635,13 @@ async function initWatchView(streamId: string, user: User | null) {
         // only one stops it is that track's pipeline, which is a completely different fault.
         const vbytes = watchPeek<{ bytesReceived?: number }>(el, "video", "stats")?.bytesReceived ?? -1;
         const vstalled = watchPeek<boolean>(el, "video", "stalled") ?? null;
+        // Audio pipeline internals, for the `audio track=/rate=/stalled=/ts=` line below.
+        const aSource = (watchPart(el, "audio") as { source?: { out?: Record<string, unknown> } } | undefined)?.source;
+        const audioTrack = peekSignal<string>(aSource?.out?.track);
+        const cfgRate = peekSignal<{ sampleRate?: number }>(aSource?.out?.config)?.sampleRate ?? null;
+        const graphRate = watchPeek<number>(el, "audio", "sampleRate") ?? null;
+        const aStalled = watchPeek<boolean>(el, "audio", "stalled") ?? null;
+        const aTs = watchPeek<number>(el, "audio", "timestamp") ?? null;
         const vts = watchPeek<number>(el, "video", "timestamp") ?? null;
         // Is the CONNECTION still up? A live socket with no bytes means the relay stopped
         // sending; a dead one means the transport dropped and nothing re-established it.
@@ -4700,6 +4707,24 @@ async function initWatchView(streamId: string, user: User | null) {
           (wtProbe.datagramErr ? `  ERR ${wtProbe.datagramErr.slice(0, 60)}` : "") +
           `\n` +
           `audio B ${bytes}  (moved ${(nowS - lastAudioMove).toFixed(0)}s ago)\n` +
+          // The decode->emit stretch, which nothing above can see into. "Bytes arriving,
+          // decrypt ok, actx running, no sound" was reported on macOS Safari and every counter
+          // in this panel was healthy, because they all stop short of the ring buffer. These
+          // four separate the remaining possibilities in one glance:
+          //
+          //   track    which rendition was actually selected ("audio" vs "audio/dg"). A viewer
+          //            silently on the datagram rendition over a transport that carries none
+          //            looks exactly like a decode failure.
+          //   rate     catalog rate -> the rate the graph actually runs at. Opus only decodes
+          //            at its native rates; Safari REFUSES a catalog advertising anything else
+          //            while Chrome ignores the field and plays it, so a mismatch here is
+          //            audible on one browser and silent on the other.
+          //   stalled  the ring waiting to fill. TRUE forever means the decoder is producing
+          //            nothing, so the worklet emits zeros no matter how healthy the transport.
+          //   ts       the worklet's playhead. Frozen means the ring is not draining, i.e.
+          //            nothing is reaching the speakers even though the context is running.
+          `audio   track=${audioTrack ?? "?"}  rate=${cfgRate ?? "?"}->${graphRate ?? "?"}` +
+          `  stalled=${aStalled === null ? "?" : aStalled}  ts=${aTs === null ? "?" : Math.round(aTs)}\n` +
           `video B ${vbytes}  (moved ${(nowS - lastVideoMove).toFixed(0)}s ago)  stalled=${vstalled}\n` +
           `decrypt ok ${successes} fail ${failures}  (moved ${(nowS - lastDecMove).toFixed(0)}s ago)\n` +
           `vts     ${vts === null ? "?" : Math.round(vts as number)}\n` +
