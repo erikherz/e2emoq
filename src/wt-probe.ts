@@ -154,3 +154,21 @@ export function installWtProbe(anticipated = 0): void {
   g.WebTransport = ProbedWebTransport as unknown as WtCtor;
   wtProbe.installed = true;
 }
+
+// SELF-INSTALL AT IMPORT TIME.
+//
+// HARDENING HERE, NOT A BUG FIX: on @moq 0.1.5 the DOMContentLoaded install demonstrably works
+// (an iPhone reading `sess=1` on wallflower.tv is what proved it). It is done anyway because the
+// assumption behind that call site — "the first connection happens well after DOMContentLoaded"
+// — turned out to be false on 0.3.5, where the same code measured zero sessions on iOS while
+// media plainly flowed. Module evaluation is strictly earlier and carries no such assumption.
+//
+// It matters beyond diagnostics: the watch page rebuilds the player on wtProbe.uni (see
+// STREAM_BUDGET), so a probe that never installs silently disables the iOS stall mitigation.
+//
+// installWtProbe() is idempotent, so the later call from init() is harmless.
+try {
+  installWtProbe(0);
+} catch {
+  // Never let instrumentation be the reason the page fails to load.
+}

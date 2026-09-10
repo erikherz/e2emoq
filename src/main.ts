@@ -4305,10 +4305,29 @@ async function initWatchView(streamId: string, user: User | null) {
       let lastAudioMove = 0;
       let lastVideoMove = 0;
       let lastDecMove = 0;
-      // Which transport the page ACTUALLY chose. iOS Safari has no WebTransport and falls back
-      // to the WebSocket polyfill; every clean headless run used native WebTransport, so this
-      // is the single most important line for telling those two worlds apart.
-      const TRANSPORT = needsPolyfill ? "TRANSPORT=websocket-polyfill" : "TRANSPORT=native-webtransport";
+      // WHAT THIS LINE USED TO CLAIM, AND WHY IT WAS WRONG. It said "which transport the page
+      // ACTUALLY chose" while being computed from `needsPolyfill`, i.e.
+      // `typeof WebTransport === "undefined"` — a CAPABILITY check evaluated once at module
+      // load. It answers "does this browser have the WebTransport API", never "what is this
+      // session running over".
+      //
+      // Those differ exactly where it matters. @moq's connect() races a WebSocket fallback
+      // against WebTransport (500ms head start, Promise.any). A browser can HAVE WebTransport,
+      // lose that race, and run the entire session over qmux/WebSocket — while this line
+      // cheerfully reports "native-webtransport". On vivoh.earth that mislabel cost an
+      // afternoon: it sent the investigation at iOS datagram support, at AudioContext
+      // gestures, and at moq version negotiation, when the session was simply on WebSocket.
+      //
+      // Now derived from evidence. The probe counts every WebTransport actually constructed, so
+      // a live session with zero of them is a session that is not on WebTransport. Evaluated
+      // per tick rather than once, because as a `const` computed before any session exists an
+      // evidence-based check would read "not webtransport" forever.
+      const TRANSPORT = () =>
+        needsPolyfill
+          ? "TRANSPORT=no-webtransport-api"
+          : wtProbe.constructed > 0
+            ? `TRANSPORT=webtransport (${wtProbe.constructed} sess)`
+            : "TRANSPORT=NOT-webtransport (websocket fallback won)";
 
       const tick = () => {
         const el = live as unknown as {
@@ -4379,7 +4398,11 @@ async function initWatchView(streamId: string, user: User | null) {
 
         panel.textContent =
           `up ${nowS.toFixed(0)}s   ${stalledFor >= 3 ? `STALLED ${stalledFor}s` : "flowing"}\n` +
-          `conn    ${conn}  bcast=${bstatus}/${bactive}  ${TRANSPORT}\n` +
+          `conn    ${conn}  bcast=${bstatus}/${bactive}  ${TRANSPORT()}\n` +
+          // probe= says whether the instrument is attached at all, so a zero anywhere below
+          // can be read as a measurement rather than as its absence.
+          `probe   installed=${wtProbe.installed ? "y" : "n"} sess=${wtProbe.constructed}` +
+          `${wtProbe.err ? ` err=${wtProbe.err.slice(0, 40)}` : ""}\n` +
           quicLine +
           `audio B ${bytes}  (moved ${(nowS - lastAudioMove).toFixed(0)}s ago)\n` +
           `video B ${vbytes}  (moved ${(nowS - lastVideoMove).toFixed(0)}s ago)  stalled=${vstalled}\n` +
