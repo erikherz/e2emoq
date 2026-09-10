@@ -76,6 +76,14 @@ interface MoqPublishElement extends HTMLElement {
   muted: boolean;
   connection: { status: MoqSignal<ConnStatus> };
   state: { source: MoqSignal<PublishSource> };
+  // @moq/publish 0.4.x moved track injection off `broadcast.video/audio.source` and onto the
+  // element's own capture/audio components, with inputs behind `in`. Declared loosely because
+  // the shipped bundle does not always match its own .d.ts — see the settable() guard, which
+  // checks the runtime object rather than trusting these types.
+  capture?: { in?: { source?: unknown } };
+  audio?: { in?: { source?: unknown; enabled?: unknown }; codec?: unknown };
+  broadcast?: unknown;
+  announce?: unknown;
 }
 
 interface MoqWatchElement extends HTMLElement {
@@ -2090,9 +2098,29 @@ function initBroadcastView(initialStreamId: string, user: User | null) {
     };
 
     // Low-level seam: a video/audio Source is just a MediaStreamTrack signal.
-    const bcast = publisher.broadcast as unknown as {
-      video: { source: { set(t: MediaStreamTrack | undefined): void } };
-      audio: { source: { set(t: MediaStreamTrack | undefined): void } };
+    //
+    // @moq/publish 0.4.x MOVED this. It used to be `publisher.broadcast.video.source`; the
+    // element now owns capture directly and keeps inputs behind `in`. Reading the old path
+    // yields undefined and the first `.set()` throws "Cannot read properties of undefined",
+    // which reads like a camera fault rather than an API move.
+    //
+    // Guarded rather than trusted: `readonlys()` is documented as the identity function at
+    // runtime, so these are settable despite their types, and the shipped bundle does not
+    // always match its own .d.ts. Check the runtime object, and fail loudly if it moves again —
+    // a compositor track with nowhere to go publishes nothing while looking completely live.
+    const settable = (v: unknown, where: string): { set(t: unknown): void } => {
+      if (!v || typeof (v as { set?: unknown }).set !== "function") {
+        throw new Error(
+          `[publish] ${where} is not a settable signal any more — @moq/publish moved or froze it. ` +
+            `The compositor track has nowhere to go, so publishing would look live and send nothing.`
+        );
+      }
+      return v as { set(t: unknown): void };
+    };
+
+    const bcast = {
+      video: { source: settable(publisher.capture?.in?.source, "publisher.capture.in.source") },
+      audio: { source: settable(publisher.audio?.in?.source, "publisher.audio.in.source") },
     };
 
     // Any video state (camera and/or screen) routes through ONE compositor whose canvas
@@ -2316,7 +2344,17 @@ function initBroadcastView(initialStreamId: string, user: User | null) {
             comp.setSystemAudioEnabled(audio && screen);
             await comp.setMicEnabled(audio);
 
-            publisher.announce = true;
+            // "always", not `true`. This was a boolean through @moq/publish 0.2.x and became an
+            // enum ("always" | "source" | "never") in 0.4.x. The setter takes whatever it is
+            // given, and the gate is `announce === "always" || (announce === "source" && track)`
+            // — so `true` matches neither, the broadcast is never enabled, and `broadcast.net`
+            // stays undefined. NOTHING THROWS. The encoders still resolve their codecs and fill
+            // in the catalog, so the publisher looks completely healthy while publishing zero
+            // frames; the only outward symptom is that every viewer waits forever.
+            //
+            // "always" rather than "source" because we composite our own canvas and hand the
+            // element a track directly, so its own capture never runs.
+            publisher.announce = "always";
             publisher.source = undefined;
             publisher.invisible = !hasVideo; // audio-only -> no camera light / no video track
             publisher.muted = false; // the mixed audio track is always published (silent when audio off) to keep it stable
@@ -3364,7 +3402,7 @@ function stopForKill(role: "viewer" | "broadcaster"): void {
   if (publisher) {
     publisher.removeAttribute("url");
     try {
-      publisher.announce = false;
+      publisher.announce = "never"; // enum since 0.4.x; `false` matches no branch (see above)
       publisher.source = null;
     } catch {
       // Older element builds expose these differently; removing the URL above is what stops
@@ -4082,15 +4120,56 @@ async function initWatchView(streamId: string, user: User | null) {
       return lit > (d.length / 4) * 0.05;
     };
 
+    /**
+     * Read a <moq-watch> internal across two INCOMPATIBLE element shapes.
+     *
+     * @moq/watch 0.2.x hung its components off `el.backend` and exposed their signals directly.
+     * 0.5.4 hangs the components off the element itself and puts every output behind `out`.
+     * The upgrade changed both, and nothing throws: every `el.backend.audio.<signal>` read
+     * simply evaluates to undefined. On vivoh.earth that degraded three features in total
+     * silence — the audio-only watchdog, the iOS "restore audio" button, and half the diag
+     * panel — and the panel's dead `actx none` was then read as EVIDENCE that a feature had
+     * killed the audio emitter. It had not; the reader had. That cost a rollback and a day.
+     *
+     * So accept either shape, and make an unknown one visible (`shape=` in the diag panel)
+     * instead of quietly reporting nothing.
+     */
+    const watchPart = (el: unknown, kind: "audio" | "video"): unknown => {
+      const e = el as Record<string, unknown> | null | undefined;
+      const backend = e?.backend as Record<string, unknown> | undefined;
+      return e?.[kind] ?? backend?.[kind];
+    };
+
+    /** A component's signal, whichever side of the `out` split it lives on. */
+    const partSignal = (component: unknown, name: string): unknown => {
+      const c = component as Record<string, unknown> | null | undefined;
+      const out = c?.out as Record<string, unknown> | undefined;
+      return out?.[name] ?? c?.[name];
+    };
+
+    const peekSignal = <T,>(signal: unknown): T | undefined =>
+      (signal as { peek?: () => T | undefined } | undefined)?.peek?.();
+
+    /** Shorthand: peek a named signal off the element's audio/video component. */
+    const watchPeek = <T,>(el: unknown, kind: "audio" | "video", name: string): T | undefined =>
+      peekSignal<T>(partSignal(watchPart(el, kind), name));
+
+    /** Which element shape this build actually found, for the diag panel to state outright. */
+    const watchShape = (el: unknown): string => {
+      const e = el as Record<string, unknown> | null | undefined;
+      if (!e) return "no element";
+      if (e.audio) return partSignal(e.audio, "context") ? "0.5.x" : "0.5.x?";
+      if (e.backend) return "0.2.x";
+      return "UNKNOWN — every internal read below is blind";
+    };
+
     // A swap has succeeded when media is ARRIVING, which is not the same as a lit canvas.
     // isPainting needs pixels, and an audio-only stream has no video to light them — so judging
     // a rebuild by paint alone makes every audio-only swap report failure, the old element is
     // kept, and the player can never be recovered. Fall back to the audio byte counter.
     const isReceiving = (el: Element): boolean => {
       if (isPainting(el)) return true;
-      const bytes = (el as unknown as {
-        backend?: { audio?: { stats?: { peek?: () => { bytesReceived?: number } | undefined } } };
-      })?.backend?.audio?.stats?.peek?.()?.bytesReceived;
+      const bytes = watchPeek<{ bytesReceived?: number }>(el, "audio", "stats")?.bytesReceived;
       return typeof bytes === "number" && bytes > 0;
     };
 
@@ -4184,9 +4263,7 @@ async function initWatchView(streamId: string, user: User | null) {
      * rebuild has actually left the context suspended, so the working path cannot be affected.
      */
     const audioCtxNow = (): AudioContext | undefined =>
-      (live as unknown as {
-        backend?: { audio?: { context?: { peek?: () => AudioContext | undefined } } };
-      })?.backend?.audio?.context?.peek?.();
+      watchPeek<AudioContext>(live, "audio", "context");
 
     let restoreBtn: HTMLButtonElement | null = null;
 
@@ -4384,35 +4461,29 @@ async function initWatchView(streamId: string, user: User | null) {
 
       const tick = () => {
         const el = live as unknown as {
-          backend?: {
-            audio?: {
-              context?: { peek?: () => AudioContext | undefined };
-              stats?: { peek?: () => { bytesReceived?: number } | undefined };
-              buffered?: { peek?: () => unknown };
-            };
-            video?: {
-              stats?: { peek?: () => { bytesReceived?: number } | undefined };
-              stalled?: { peek?: () => boolean };
-              timestamp?: { peek?: () => number };
-            };
-          };
           connection?: { established?: { peek?: () => unknown }; url?: { peek?: () => URL | undefined } };
-          broadcast?: { status?: { peek?: () => string }; active?: { peek?: () => unknown } };
+          broadcast?: {
+            out?: { status?: { peek?: () => string }; active?: { peek?: () => unknown } };
+            status?: { peek?: () => string };
+            active?: { peek?: () => unknown };
+          };
         };
-        const a = el?.backend?.audio;
-        const v = el?.backend?.video;
-        const ctx = a?.context?.peek?.();
-        const bytes = a?.stats?.peek?.()?.bytesReceived ?? -1;
+        // Every read below goes through watchPart/partSignal. This panel used to read a shape
+        // the element stopped having at the @moq upgrade and printed a confident "actx none"
+        // for an AudioContext that was running the whole time. `shape` says what it found.
+        const shape = watchShape(el);
+        const ctx = watchPeek<AudioContext>(el, "audio", "context");
+        const bytes = watchPeek<{ bytesReceived?: number }>(el, "audio", "stats")?.bytesReceived ?? -1;
         // VIDEO bytes separately from audio. If both stop together the connection died; if
         // only one stops it is that track's pipeline, which is a completely different fault.
-        const vbytes = v?.stats?.peek?.()?.bytesReceived ?? -1;
-        const vstalled = v?.stalled?.peek?.() ?? null;
-        const vts = v?.timestamp?.peek?.() ?? null;
+        const vbytes = watchPeek<{ bytesReceived?: number }>(el, "video", "stats")?.bytesReceived ?? -1;
+        const vstalled = watchPeek<boolean>(el, "video", "stalled") ?? null;
+        const vts = watchPeek<number>(el, "video", "timestamp") ?? null;
         // Is the CONNECTION still up? A live socket with no bytes means the relay stopped
         // sending; a dead one means the transport dropped and nothing re-established it.
-        const conn = el?.connection?.established?.peek?.() ? "up" : "DOWN";
-        const bstatus = el?.broadcast?.status?.peek?.() ?? "?";
-        const bactive = el?.broadcast?.active?.peek?.() ? "yes" : "no";
+        const conn = peekSignal(partSignal(el?.connection, "established")) ? "up" : "DOWN";
+        const bstatus = peekSignal<string>(partSignal(el?.broadcast, "status")) ?? "?";
+        const bactive = peekSignal(partSignal(el?.broadcast, "active")) ? "yes" : "no";
         const { successes, failures } = decryptStats();
         const canvas = live.querySelector("canvas") as HTMLCanvasElement | null;
 
@@ -4462,7 +4533,7 @@ async function initWatchView(streamId: string, user: User | null) {
           `decrypt ok ${successes} fail ${failures}  (moved ${(nowS - lastDecMove).toFixed(0)}s ago)\n` +
           `vts     ${vts === null ? "?" : Math.round(vts as number)}\n` +
           `canvas  ${canvas ? `${canvas.width}x${canvas.height}` : "none"}\n` +
-          `actx    ${ctx ? `${ctx.state} t=${ctx.currentTime.toFixed(1)}` : "none"}  muted=${live.muted}\n` +
+          `actx    ${ctx ? `${ctx.state} t=${ctx.currentTime.toFixed(1)}` : "none"}  muted=${live.muted}\n  shape=${shape}` +
           `page    ${document.visibilityState}` +
           (mem ? `  heap ${(mem.usedJSHeapSize / 1048576).toFixed(0)}MB` : "");
       };

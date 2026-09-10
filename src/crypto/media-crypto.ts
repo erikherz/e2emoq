@@ -198,9 +198,28 @@ function chain(group: object, task: () => Promise<void>): void {
   chains.set(group, next);
 }
 
+/**
+ * A media frame as @moq hands it to the seams.
+ *
+ * This CHANGED at the upgrade: `writeFrame(bytes)` became `writeFrame({ payload, timestamp })`.
+ * The seam string in vite.config.ts for @moq/net's Track.writeFrame is character-identical
+ * across both versions, so the patch kept applying cleanly and silently started passing an
+ * object where bytes were expected. `requireFrame` below exists because of that: a shape
+ * change that a string match cannot see has to be caught at the first frame instead.
+ */
+interface MoqFrame {
+  payload: Uint8Array;
+  timestamp: unknown;
+}
+
 interface GroupLike {
-  writeFrame(frame: Uint8Array): void;
+  writeFrame(frame: MoqFrame): void;
   close(): void;
+}
+
+/** A track that can carry a frame as a QUIC datagram rather than opening a group. */
+interface TrackLike {
+  appendDatagram(timestamp: unknown, payload: Uint8Array): void;
 }
 
 // Installed onto globalThis for the build-time library patch to call.
@@ -208,11 +227,32 @@ interface MediaCryptoHooks {
   shouldEncrypt(trackName?: string): boolean;
   shouldDecrypt(): boolean;
   // video path: many frames per group, group rotates on keyframe
-  write(group: GroupLike, frame: Uint8Array): void;
+  write(group: GroupLike, frame: MoqFrame): void;
   closeGroup(group: GroupLike): void; // chained close so pending writes flush first
   // audio path: one group per frame (Track.writeFrame), closed immediately
-  writeAndClose(group: GroupLike, frame: Uint8Array): void;
+  writeAndClose(group: GroupLike, frame: MoqFrame): void;
+  // audio-over-datagrams: no group, no stream, one datagram per frame
+  writeDatagram(track: TrackLike, frame: MoqFrame): void;
   beforeDecode(frame: Uint8Array, trackName?: string, firstInGroup?: boolean): Promise<Uint8Array>;
+}
+
+/**
+ * Fail loudly on the first frame if the seams are handing us a shape we do not understand.
+ *
+ * A build-time string match proves a string matched, not that the value flowing through it is
+ * what the code assumes. When `writeFrame(bytes)` became `writeFrame({payload, timestamp})` the
+ * seam still applied and the build still reported success; what changed was the meaning of the
+ * argument. Encrypting `frame` instead of `frame.payload` would ship garbage, and encrypting
+ * nothing would ship PLAINTEXT — which is the failure this whole module exists to prevent.
+ */
+function requireFrame(frame: MoqFrame, where: string): void {
+  if (!frame || !(frame.payload instanceof Uint8Array)) {
+    throw new Error(
+      `[media-crypto] ${where}: expected a { payload: Uint8Array } frame, got ` +
+        `${Object.prototype.toString.call(frame)} — the @moq frame shape moved and the seam is ` +
+        `now feeding this the wrong thing. Refusing to encrypt an unknown shape.`
+    );
+  }
 }
 
 function install(): void {
@@ -220,15 +260,17 @@ function install(): void {
     shouldEncrypt: () => mode === "publisher" && armed,
     shouldDecrypt: () => mode === "viewer" && armed,
     write(group, frame) {
+      requireFrame(frame, "write");
       // The first write to a group is its keyframe — the only safe moment to change key.
       if (!chains.has(group)) {
         sawVideoGroup = true;
         promotePendingKey();
       }
+      const { payload, timestamp } = frame;
       chain(group, async () => {
-        const enc = await encryptFrame(frame);
+        const enc = await encryptFrame(payload);
         try {
-          group.writeFrame(enc);
+          group.writeFrame({ payload: enc, timestamp });
         } catch {
           /* group already closed — drop */
         }
@@ -244,14 +286,16 @@ function install(): void {
       });
     },
     writeAndClose(group, frame) {
+      requireFrame(frame, "writeAndClose");
       // Audio has no keyframe dependency: every frame is its own group, so a viewer recovers
       // on the next frame regardless. Only carry a pending re-key here when there is no video
       // to wait for, otherwise audio would run ahead of the video keyframe and re-split it.
       if (!sawVideoGroup) promotePendingKey();
+      const { payload, timestamp } = frame;
       chain(group, async () => {
         try {
-          const enc = await encryptFrame(frame);
-          group.writeFrame(enc);
+          const enc = await encryptFrame(payload);
+          group.writeFrame({ payload: enc, timestamp });
         } catch {
           /* drop */
         } finally {
@@ -260,6 +304,30 @@ function install(): void {
           } catch {
             /* already closed */
           }
+        }
+      });
+    },
+    writeDatagram(track, frame) {
+      requireFrame(frame, "writeDatagram");
+      // Datagram audio takes a different route to the wire than the group path above, so it
+      // needs its own encrypt call — and therefore its own chance to ship plaintext. It is
+      // chained on the TRACK rather than a group, because there is no group: one datagram per
+      // frame, no stream opened, which is the entire point (it is what takes an iPhone out from
+      // under WebKit's ~7,600-stream ceiling).
+      //
+      // Same re-key rule as audio groups: only promote when there is no video keyframe to wait
+      // for, otherwise audio runs ahead of the video re-key.
+      if (!sawVideoGroup) promotePendingKey();
+      const { payload, timestamp } = frame;
+      chain(track as unknown as GroupLike, async () => {
+        try {
+          const enc = await encryptFrame(payload);
+          track.appendDatagram(timestamp, enc);
+        } catch (e) {
+          // DROP, never fall back to sending it in the clear. A silent gap in the audio is a
+          // bug; a frame on the wire that the relay can read is the product failing at the one
+          // thing it claims.
+          console.warn("[media-crypto] datagram dropped", e);
         }
       });
     },
