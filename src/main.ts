@@ -2243,10 +2243,18 @@ function initBroadcastView(initialStreamId: string, user: User | null) {
 
     // Serialize because getDisplayMedia/getUserMedia show permission prompts.
     let applying = false;
-    const applyState = async () => {
-      if (applying) return;
-      applying = true;
-      try {
+    // Set when a capture toggle arrives while a pass is already running. See applyState below.
+    let restage = false;
+
+    /**
+     * ONE reconcile pass: read `capture` and make the world match it.
+     *
+     * The snapshot below is taken once and then survives several awaits — getUserMedia can take
+     * a second or more — so a pass applies the state as it was when the pass STARTED. That is
+     * only safe because applyState re-runs this whenever the state moved underneath it.
+     */
+    const applyOnce = async () => {
+      {
         const { camera, audio, screen } = capture;
         anyActive = camera || audio || screen;
         const hasVideo = camera || screen;
@@ -2345,6 +2353,51 @@ function initBroadcastView(initialStreamId: string, user: User | null) {
         publisher.announce = "source";
         publisher.source = null;
         endBroadcast();
+      }
+    };
+
+    /**
+     * Serialize passes, and NEVER drop one.
+     *
+     * The permission prompts are why there is a lock at all: two overlapping passes would race
+     * two dialogs. But the lock used to `return` when busy, which threw the request away — and
+     * each pass snapshots `capture` before its awaits. Click Camera and then Audio before the
+     * camera's getUserMedia resolves, and the audio request simply vanished: the in-flight pass
+     * had already read `audio: false` and went on to call setMicEnabled(false), and nothing ever
+     * ran again.
+     *
+     * The broadcaster then went live with the microphone button LIT and the mixed track
+     * publishing digital silence — 3-byte Opus frames, which every viewer decodes happily and
+     * nobody hears. Measured on e2emoq.com before this fix: 1011 frames, min 3 bytes, max 3
+     * bytes, viewer peak 0.0000. Nothing reported an error at any layer, on either end.
+     *
+     * So coalesce instead of dropping: a request arriving mid-pass sets `restage` and the loop
+     * runs another pass with a fresh snapshot. Repeated toggles collapse into one extra pass
+     * rather than a queue. The cap is a backstop against a callback that re-arms every pass —
+     * bounded, and it says so rather than spinning in silence.
+     *
+     * Regression test: scripts/e2e/audio-audible.mjs, the FAST cell.
+     */
+    const MAX_RESTAGE_PASSES = 8;
+    const applyState = async () => {
+      if (applying) {
+        restage = true;
+        return;
+      }
+      applying = true;
+      try {
+        let passes = 0;
+        do {
+          restage = false;
+          await applyOnce();
+          if (++passes >= MAX_RESTAGE_PASSES && restage) {
+            console.warn(
+              `[media] capture state still changing after ${passes} reconcile passes; stopping here. ` +
+                `The control bar and the actual capture may now disagree.`
+            );
+            break;
+          }
+        } while (restage);
       } finally {
         applying = false;
       }
