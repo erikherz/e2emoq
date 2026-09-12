@@ -3687,11 +3687,24 @@ async function initWatchView(streamId: string, user: User | null) {
     /**
      * Pull replayable decoder configs out of the live catalog.
      *
-     * Measured shape (scripts/e2e/_catalog-probe.mjs against a real stream):
-     *   broadcast.catalog.peek() -> { video: { renditions: { "video/hd": {...} } },
-     *                                 audio: { renditions: { "audio/data": {...} } } }
+     * Measured shape (scripts/e2e/_catprobe.mjs against a real stream, @moq/watch 0.5.4):
+     *   el.catalog -> { video: { renditions: { "video": {...} }, display: {...} },
+     *                   audio: { renditions: { "audio": {...}, "audio/dg": {...} } } }
      * The rendition KEY is the MoQ track name the decrypt seam reports, which is how a
-     * recorded frame gets sorted to the right decoder.
+     * recorded frame gets sorted to the right decoder. Note "audio/dg": the datagram
+     * rendition appears alongside the group one, and the first entry is the group track.
+     *
+     * WHERE IT LIVES HAS MOVED, and finding it is why this reads three places. Up to
+     * @moq/hang 0.2.x it was `el.broadcast.catalog.peek()`. After the upgrade `el.broadcast`
+     * still EXISTS — it just holds `{in, out}` now and has no `catalog` — so the old reader
+     * went on returning undefined without throwing, the header was written with no decoder
+     * config, and every recording made since then replays as a black rectangle while
+     * reporting "fed=N dropped=0". Nothing failed; a feature simply stopped working. The
+     * same optional-chained-accessor-into-a-moved-shape bug took out the audio watchdog and
+     * the iOS restore-audio button in the same upgrade.
+     *
+     * So: try each known shape, and SAY SO when none of them match, because the silence is
+     * the actual defect here.
      *
      * The rendition value is a superset of a WebCodecs config — it also carries `container`,
      * `jitter`, `bitrate`, `framerate`. Those are publisher/transport hints and WebCodecs
@@ -3715,15 +3728,28 @@ async function initWatchView(streamId: string, user: User | null) {
       videoTrack?: string;
     } => {
       try {
+        type Cat = {
+          video?: { renditions?: Record<string, Record<string, unknown>> };
+          audio?: { renditions?: Record<string, Record<string, unknown>> };
+        };
         const el = document.querySelector("moq-watch") as unknown as {
-          broadcast?: { catalog?: { peek?: () => unknown } };
+          catalog?: Cat;
+          broadcast?: { catalog?: { peek?: () => unknown }; out?: { catalog?: { peek?: () => unknown } } };
         } | null;
-        const cat = el?.broadcast?.catalog?.peek?.() as
-          | {
-              video?: { renditions?: Record<string, Record<string, unknown>> };
-              audio?: { renditions?: Record<string, Record<string, unknown>> };
-            }
-          | undefined;
+
+        const cat = (el?.catalog ??
+          (el?.broadcast?.out?.catalog?.peek?.() as Cat | undefined) ??
+          (el?.broadcast?.catalog?.peek?.() as Cat | undefined)) as Cat | undefined;
+
+        if (!cat) {
+          console.warn(
+            "[recording] no catalog on <moq-watch> in any known shape (el.catalog, " +
+              "broadcast.out.catalog.peek(), broadcast.catalog.peek()). The recording will have " +
+              "no decoder config and will replay black. The element shape moved again — re-probe " +
+              "with scripts/e2e/_catprobe.mjs."
+          );
+          return {};
+        }
         const vEntry = Object.entries(cat?.video?.renditions ?? {})[0];
         const aEntry = Object.entries(cat?.audio?.renditions ?? {})[0];
         return {

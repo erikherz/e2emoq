@@ -38,10 +38,42 @@ try {
   await bc.waitForSelector('button.publish-btn[title="Camera"]', { timeout: 30000 });
   await bc.click('button.publish-btn[title="Camera"]');
   await bc.waitForFunction(() => /[?&]stream=[a-z0-9]{5}/.test(location.href), { timeout: 30000 });
-  // The chat control is a button in the capture bar now, not a checkbox in the header. Assert
-  // it actually latched: a click that silently did nothing would leave the viewer with no chat
-  // to join, and every check below would fail somewhere far away from the cause.
+  // The chat control is a button in the capture bar now, not a checkbox in the header — and
+  // since the bar collapsed to Camera · Audio · More, it lives inside the More disclosure. It is
+  // in the DOM either way, zero-sized and inside a `.hidden` parent when the menu is shut, so
+  // `waitForSelector` finds it and `click` then fails with "Node is either not clickable or not
+  // an Element" from a line that has nothing to do with chat. Open the menu first.
+  // STILL RED as of 2026-09-12, and not from chat. Revealing the button (below) fixed the first
+  // blocker; the click on #chat-btn that follows then times out inside CDP's
+  // Input.dispatchMouseEvent. Both blockers are control-bar plumbing introduced when the bar
+  // collapsed to Camera · Audio · More, and neither touches the chat key path — deriveChatKey,
+  // sealText and openText were not modified by the SFrame change. Left failing rather than
+  // skipped, because a disabled test is one nobody looks at again.
   await bc.waitForSelector("#chat-btn", { timeout: 30000 });
+  const chatHidden = await bc.evaluate(
+    () => !!document.getElementById("chat-btn")?.closest(".hidden,[hidden]")
+  );
+  if (chatHidden) {
+    // Dispatched in-page rather than as a real mouse click. A real click is the right default —
+    // it is the only thing that can see an overlay eating the user's input — but here the target
+    // is a disclosure whose own animation swallows the CDP mouse event and times out. What is
+    // under test is chat, not the menu, so reveal it the cheap way and let the chat button
+    // itself take a genuine click below.
+    const revealed = await bc.evaluate(() => {
+      const m = document.querySelector('[title="More"], #more-btn, .more-btn');
+      if (!m) return false;
+      m.click();
+      return true;
+    });
+    if (!revealed) throw new Error("#chat-btn is hidden and there is no More control to reveal it");
+    await bc.waitForFunction(
+      () => !document.getElementById("chat-btn")?.closest(".hidden,[hidden]"),
+      { timeout: 10000 }
+    );
+  }
+
+  // Assert it actually latched: a click that silently did nothing would leave the viewer with
+  // no chat to join, and every check below would fail somewhere far away from the cause.
   await bc.click("#chat-btn");
   await bc.waitForFunction(
     () => document.getElementById("chat-btn")?.classList.contains("toggle-on"),
